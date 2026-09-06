@@ -114,11 +114,32 @@
 
           RUST_SRC_PATH = "${pkgs.rust.packages.stable.rustPlatform.rustLibSrc}";
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath buildInputs;
+          # On a machine with a vendor GPU driver (NVIDIA, here) the running
+          # NixOS system normally exports __EGL_EXTERNAL_PLATFORM_CONFIG_DIRS
+          # pointing at /run/opengl-driver/share/egl/egl_external_platform.d,
+          # the directory holding the driver's own EGL-on-Wayland plugin
+          # (egl-wayland/egl-gbm) - without it, libglvnd's vendor dispatch
+          # still finds and tries the NVIDIA ICD (its egl_vendor.d entry is
+          # a fixed compiled-in path, unaffected by this shell), but the
+          # driver itself can't speak the Wayland EGL platform without that
+          # plugin and fails to initialize, so glvnd falls through to Mesa -
+          # which has no driver for this GPU at all ("driver (null)" in its
+          # EGL warnings). The app still opens a window, but the GL context
+          # underneath it is broken, leaving it unrendered and unresponsive.
+          # `nix develop`/direnv's pure shell doesn't inherit that session
+          # var, so it's set explicitly here.
+          shellHook = ''
+            export __EGL_EXTERNAL_PLATFORM_CONFIG_DIRS="/run/opengl-driver/share/egl/egl_external_platform.d''${__EGL_EXTERNAL_PLATFORM_CONFIG_DIRS:+:$__EGL_EXTERNAL_PLATFORM_CONFIG_DIRS}"
+          '';
         };
 
         devShells.settings-gui = pkgs.mkShell {
           packages = [ pkgs.go pkgs.gopls pkgs.pkg-config ] ++ guiSettingsBuildInputs;
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath guiSettingsBuildInputs;
+          # See devShells.default above for why this is needed.
+          shellHook = ''
+            export __EGL_EXTERNAL_PLATFORM_CONFIG_DIRS="/run/opengl-driver/share/egl/egl_external_platform.d''${__EGL_EXTERNAL_PLATFORM_CONFIG_DIRS:+:$__EGL_EXTERNAL_PLATFORM_CONFIG_DIRS}"
+          '';
           # See the `tags` comment on packages.settings-gui: the compositor
           # has no XWayland, so this always needs glfw's native-Wayland
           # backend. GOFLAGS applies the tag to `go build`/`go run`/`go
