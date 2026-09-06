@@ -19,6 +19,8 @@ pub mod launcher;
 #[cfg(feature = "libei")]
 pub mod libei;
 pub mod render;
+#[cfg(feature = "udev")]
+pub mod session;
 pub mod shell;
 pub mod state;
 #[cfg(feature = "udev")]

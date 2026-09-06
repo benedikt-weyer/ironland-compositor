@@ -640,6 +640,8 @@ pub fn run_udev() {
     #[cfg(feature = "libei")]
     crate::libei::listen_eis(&event_loop.handle());
 
+    crate::session::announce_session_start(state.socket_name.as_deref());
+
     /*
      * And run our loop
      */
@@ -658,6 +660,8 @@ pub fn run_udev() {
             display_handle.flush_clients().unwrap();
         }
     }
+
+    crate::session::announce_session_end();
 }
 
 impl DrmLeaseHandler for AnvilState<UdevData> {
