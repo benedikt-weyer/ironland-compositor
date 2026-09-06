@@ -1,5 +1,7 @@
 //! Bridges the compositor's `ext-workspace-v1` global (see
-//! `crate::ext_workspace`) to line-delimited JSON on stdin/stdout.
+//! `crate::ext_workspace`) - plus, best-effort, its own
+//! `ironland-workspace-windows-v1` (see `crate::workspace_windows`) - to
+//! line-delimited JSON on stdin/stdout.
 //!
 //! This exists because Quickshell (what molunga-shell is built on) has no
 //! built-in support for `ext-workspace-v1` as of the version this was
@@ -7,11 +9,16 @@
 //! bake compositor-specific glue into the shell, this is a small standalone
 //! Wayland client any shell can spawn and talk newline-JSON to.
 //!
-//! ## Output (one JSON object per line, written on every protocol `done`)
+//! ## Output (one JSON object per line, written whenever either protocol's `done` fires)
 //!
 //! ```json
-//! {"outputs":[{"name":"eDP-1","workspaces":[{"index":0,"name":"1","active":true},{"index":1,"name":"2","active":false}]}]}
+//! {"outputs":[{"name":"eDP-1","workspaces":[{"index":0,"name":"1","active":true,"windows":[{"title":"~","appId":"foot"}]},{"index":1,"name":"2","active":false,"windows":[]}]}]}
 //! ```
+//!
+//! `windows` is empty on a compositor that doesn't support
+//! `ironland-workspace-windows-v1`, and is matched to its workspace by
+//! title/app id best-effort (see that protocol's doc for why) rather than a
+//! stable id.
 //!
 //! ## Input (one JSON object per line, read from stdin)
 //!
@@ -49,6 +56,27 @@ use wayland_protocols::ext::workspace::v1::client::ext_workspace_manager_v1::{
     self, ExtWorkspaceManagerV1,
 };
 
+/// Generated client bindings for `ironland-workspace-windows-v1` (see
+/// `protocols/ironland-workspace-windows-v1.xml`) - not in the
+/// `wayland-protocols` crate since it's our own, so generated here the same
+/// way `crate::ironland_protocols` generates the compositor's server side
+/// of it (and the other two protocols in that module).
+mod workspace_windows_protocol {
+    #![allow(dead_code, non_camel_case_types, unused_imports, missing_docs, clippy::all)]
+
+    use wayland_client;
+    use wayland_client::protocol::*;
+
+    pub mod __interfaces {
+        use wayland_client::protocol::__interfaces::*;
+        wayland_scanner::generate_interfaces!("./protocols/ironland-workspace-windows-v1.xml");
+    }
+    use self::__interfaces::*;
+
+    wayland_scanner::generate_client_code!("./protocols/ironland-workspace-windows-v1.xml");
+}
+use workspace_windows_protocol::ironland_workspace_windows_v1::{self, IronlandWorkspaceWindowsV1};
+
 #[derive(Deserialize)]
 struct ActivateCommand {
     output: String,
@@ -62,10 +90,22 @@ enum Command {
 }
 
 #[derive(Serialize)]
+struct WindowJson {
+    title: String,
+    #[serde(rename = "appId")]
+    app_id: String,
+}
+
+#[derive(Serialize)]
 struct WorkspaceJson {
     index: usize,
     name: String,
     active: bool,
+    /// Best-effort: from `ironland-workspace-windows-v1` (see that
+    /// protocol's doc for why this is title/app-id keyed rather than a
+    /// stable id), keyed to this workspace by `(output name, index)`.
+    /// Empty until at least one `done` of that protocol has arrived.
+    windows: Vec<WindowJson>,
 }
 
 #[derive(Serialize)]
@@ -96,6 +136,13 @@ struct App {
     manager: Option<ExtWorkspaceManagerV1>,
     output_names: HashMap<ObjectId, String>,
     groups: Vec<GroupEntry>,
+    /// Settled snapshot from the last `ironland-workspace-windows-v1` done,
+    /// keyed by (output name, workspace index).
+    windows_by_workspace: HashMap<(String, u32), Vec<WindowJson>>,
+    /// Accumulates `window` events between two `done`s, then replaces
+    /// `windows_by_workspace` wholesale on `done` - the same snapshot
+    /// pattern `ext-workspace-v1` itself uses.
+    pending_windows: HashMap<(String, u32), Vec<WindowJson>>,
 }
 
 impl App {
@@ -106,7 +153,6 @@ impl App {
             .filter_map(|g| {
                 let name = g.output_name.clone()?;
                 Some(OutputJson {
-                    name,
                     workspaces: g
                         .workspaces
                         .iter()
@@ -114,8 +160,22 @@ impl App {
                             index: w.index,
                             name: w.name.clone(),
                             active: w.active,
+                            windows: self
+                                .windows_by_workspace
+                                .get(&(name.clone(), w.index as u32))
+                                .map(|windows| {
+                                    windows
+                                        .iter()
+                                        .map(|win| WindowJson {
+                                            title: win.title.clone(),
+                                            app_id: win.app_id.clone(),
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
                         })
                         .collect(),
+                    name,
                 })
             })
             .collect();
@@ -312,6 +372,36 @@ impl Dispatch<ExtWorkspaceGroupHandleV1, ()> for App {
     }
 }
 
+impl Dispatch<IronlandWorkspaceWindowsV1, ()> for App {
+    fn event(
+        state: &mut App,
+        _proxy: &IronlandWorkspaceWindowsV1,
+        event: ironland_workspace_windows_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<App>,
+    ) {
+        match event {
+            ironland_workspace_windows_v1::Event::Window {
+                output,
+                workspace,
+                title,
+                app_id,
+            } => {
+                state
+                    .pending_windows
+                    .entry((output, workspace))
+                    .or_default()
+                    .push(WindowJson { title, app_id });
+            }
+            ironland_workspace_windows_v1::Event::Done => {
+                state.windows_by_workspace = std::mem::take(&mut state.pending_windows);
+                state.emit_state();
+            }
+        }
+    }
+}
+
 fn main() {
     let conn = match Connection::connect_to_env() {
         Ok(conn) => conn,
@@ -328,6 +418,8 @@ fn main() {
         manager: None,
         output_names: HashMap::new(),
         groups: Vec::new(),
+        windows_by_workspace: HashMap::new(),
+        pending_windows: HashMap::new(),
     };
 
     for global in globals.contents().clone_list() {
@@ -348,6 +440,16 @@ fn main() {
             std::process::exit(1);
         }
     };
+
+    // Best-effort: a compositor without this protocol just never gets
+    // per-workspace window data (every workspace's `windows` stays empty),
+    // rather than failing to start.
+    if let Err(err) = globals.bind::<IronlandWorkspaceWindowsV1, _, _>(&qh, 1..=1, ()) {
+        eprintln!(
+            "ironland-workspaces: compositor doesn't support ironland-workspace-windows-v1, \
+             per-workspace window lists will be empty: {err}"
+        );
+    }
 
     let mut event_loop: EventLoop<App> = EventLoop::try_new().expect("failed to create event loop");
     let loop_handle = event_loop.handle();
