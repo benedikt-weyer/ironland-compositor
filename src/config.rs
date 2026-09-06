@@ -26,7 +26,7 @@ use tracing::warn;
 /// An empty string for any field means "let xkbcommon fall back to its
 /// `XKB_DEFAULT_*` environment variables / built-in default", matching
 /// [`XkbConfig`]'s own default behavior.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct KeyboardSettings {
     pub rules: String,
@@ -65,7 +65,10 @@ pub struct KeyModifiers {
 
 impl KeyModifiers {
     pub fn matches(&self, mods: &ModifiersState) -> bool {
-        self.ctrl == mods.ctrl && self.alt == mods.alt && self.shift == mods.shift && self.logo == mods.logo
+        self.ctrl == mods.ctrl
+            && self.alt == mods.alt
+            && self.shift == mods.shift
+            && self.logo == mods.logo
     }
 }
 
@@ -116,12 +119,21 @@ pub fn resolve_output_position(
     size: Size<i32, Logical>,
     placed: &[(String, Rectangle<i32, Logical>)],
 ) -> Point<i32, Logical> {
-    let find = |target: &str| placed.iter().find(|(n, _)| n == target).map(|(_, rect)| *rect);
+    let find = |target: &str| {
+        placed
+            .iter()
+            .find(|(n, _)| n == target)
+            .map(|(_, rect)| *rect)
+    };
 
     if let Some(target) = settings.mirror_of.as_deref() {
         match find(target) {
             Some(rect) => return rect.loc,
-            None => warn!(output = name, mirror_of = target, "Mirror target not connected yet, using auto placement"),
+            None => warn!(
+                output = name,
+                mirror_of = target,
+                "Mirror target not connected yet, using auto placement"
+            ),
         }
     }
 
@@ -129,24 +141,40 @@ pub fn resolve_output_position(
         Some(OutputPosition::Absolute { x, y }) => return (*x, *y).into(),
         Some(OutputPosition::RightOf { right_of }) => match find(right_of) {
             Some(rect) => return (rect.loc.x + rect.size.w, rect.loc.y).into(),
-            None => warn!(output = name, right_of, "Reference output not connected yet, using auto placement"),
+            None => warn!(
+                output = name,
+                right_of, "Reference output not connected yet, using auto placement"
+            ),
         },
         Some(OutputPosition::LeftOf { left_of }) => match find(left_of) {
             Some(rect) => return (rect.loc.x - size.w, rect.loc.y).into(),
-            None => warn!(output = name, left_of, "Reference output not connected yet, using auto placement"),
+            None => warn!(
+                output = name,
+                left_of, "Reference output not connected yet, using auto placement"
+            ),
         },
         Some(OutputPosition::Above { above }) => match find(above) {
             Some(rect) => return (rect.loc.x, rect.loc.y - size.h).into(),
-            None => warn!(output = name, above, "Reference output not connected yet, using auto placement"),
+            None => warn!(
+                output = name,
+                above, "Reference output not connected yet, using auto placement"
+            ),
         },
         Some(OutputPosition::Below { below }) => match find(below) {
             Some(rect) => return (rect.loc.x, rect.loc.y + rect.size.h).into(),
-            None => warn!(output = name, below, "Reference output not connected yet, using auto placement"),
+            None => warn!(
+                output = name,
+                below, "Reference output not connected yet, using auto placement"
+            ),
         },
         None => {}
     }
 
-    let x = placed.iter().map(|(_, rect)| rect.loc.x + rect.size.w).max().unwrap_or(0);
+    let x = placed
+        .iter()
+        .map(|(_, rect)| rect.loc.x + rect.size.w)
+        .max()
+        .unwrap_or(0);
     (x, 0).into()
 }
 
@@ -235,7 +263,7 @@ struct RawConfig {
     workspaces: WorkspaceSettings,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub keyboard: KeyboardSettings,
     pub terminal: String,
@@ -341,7 +369,12 @@ fn default_shortcuts() -> HashMap<String, Vec<String>> {
         ("toggle_decorations", vec!["super+shift+d"]),
     ]
     .into_iter()
-    .map(|(name, keys)| (name.to_string(), keys.into_iter().map(String::from).collect()))
+    .map(|(name, keys)| {
+        (
+            name.to_string(),
+            keys.into_iter().map(String::from).collect(),
+        )
+    })
     .collect()
 }
 
@@ -406,6 +439,25 @@ impl Config {
     /// [`config_search_path`], falling back to [`Config::default`] if none
     /// exist or the one found doesn't parse.
     pub fn load() -> Config {
+        match Self::try_load() {
+            Ok((config, path)) => {
+                if let Some(path) = path {
+                    tracing::info!(path = %path.display(), "Loaded compositor config");
+                }
+                config
+            }
+            Err(err) => {
+                warn!(%err, "Failed to load compositor config, using defaults");
+                Config::default()
+            }
+        }
+    }
+
+    /// Reads the current effective config without silently replacing a
+    /// malformed file with defaults. Live reload uses this so a temporary
+    /// typo never wipes the running configuration; it simply retries after
+    /// the next file change.
+    pub(crate) fn try_load() -> Result<(Config, Option<PathBuf>), String> {
         for path in config_search_path() {
             let contents = match fs::read_to_string(&path) {
                 Ok(contents) => contents,
@@ -419,30 +471,31 @@ impl Config {
             let raw: RawConfig = match toml::from_str(&contents) {
                 Ok(raw) => raw,
                 Err(err) => {
-                    warn!(path = %path.display(), %err, "Failed to parse compositor config, using defaults");
-                    return Config::default();
+                    return Err(format!("failed to parse {}: {err}", path.display()));
                 }
             };
 
             let mut shortcuts = default_shortcuts();
             shortcuts.extend(raw.shortcuts);
 
-            tracing::info!(path = %path.display(), "Loaded compositor config");
-            return Config {
-                keyboard: raw.keyboard,
-                terminal: raw.terminal.unwrap_or_else(default_terminal),
-                browser: raw.browser.unwrap_or_else(default_browser),
-                file_manager: raw.file_manager.unwrap_or_else(default_file_manager),
-                top_bar: raw.top_bar,
-                wallpaper: raw.wallpaper,
-                blur: raw.blur,
-                shortcuts,
-                outputs: raw.outputs,
-                workspaces: raw.workspaces,
-            };
+            return Ok((
+                Config {
+                    keyboard: raw.keyboard,
+                    terminal: raw.terminal.unwrap_or_else(default_terminal),
+                    browser: raw.browser.unwrap_or_else(default_browser),
+                    file_manager: raw.file_manager.unwrap_or_else(default_file_manager),
+                    top_bar: raw.top_bar,
+                    wallpaper: raw.wallpaper,
+                    blur: raw.blur,
+                    shortcuts,
+                    outputs: raw.outputs,
+                    workspaces: raw.workspaces,
+                },
+                Some(path),
+            ));
         }
 
-        Config::default()
+        Ok((Config::default(), None))
     }
 
     /// Settings for the output named `name`, or the all-default settings
@@ -514,7 +567,10 @@ impl Config {
                 continue;
             }
             if let Some(existing) = found {
-                warn!(action, existing, "Multiple actions bound to a bare Super tap, ignoring this one");
+                warn!(
+                    action,
+                    existing, "Multiple actions bound to a bare Super tap, ignoring this one"
+                );
                 continue;
             }
             found = Some(action.as_str());
@@ -528,14 +584,21 @@ impl Config {
 /// a tap of this modifier alone" rather than a modifiers+key combo. Only the
 /// Super/logo modifier is meaningful here today.
 fn is_bare_modifier_tap(spec: &str) -> bool {
-    matches!(spec.trim().to_ascii_lowercase().as_str(), "super" | "logo" | "meta" | "win")
+    matches!(
+        spec.trim().to_ascii_lowercase().as_str(),
+        "super" | "logo" | "meta" | "win"
+    )
 }
 
 /// Parses a binding spec like `"ctrl+shift+left"` into its modifiers and
 /// keysym. The last `+`-separated token is the key; everything before it is
 /// a modifier name (`ctrl`/`control`, `alt`, `shift`, `super`/`logo`/`meta`).
 fn parse_binding(spec: &str) -> Option<(KeyModifiers, Keysym)> {
-    let parts: Vec<&str> = spec.split('+').map(str::trim).filter(|s| !s.is_empty()).collect();
+    let parts: Vec<&str> = spec
+        .split('+')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
     let (mod_parts, key_part) = parts.split_last()?;
 
     let mut modifiers = KeyModifiers::default();
@@ -566,13 +629,21 @@ fn parse_key_name(name: &str, shift: bool) -> Option<Keysym> {
     let mut chars = name.chars();
     let keysym = match (chars.next(), chars.next()) {
         (Some(c), None) if c.is_ascii_alphabetic() => {
-            let letter = if shift { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() };
+            let letter = if shift {
+                c.to_ascii_uppercase()
+            } else {
+                c.to_ascii_lowercase()
+            };
             xkb::keysym_from_name(&letter.to_string(), xkb::KEYSYM_NO_FLAGS)
         }
         _ => xkb::keysym_from_name(name, xkb::KEYSYM_CASE_INSENSITIVE),
     };
 
-    if keysym.raw() == 0 { None } else { Some(keysym) }
+    if keysym.raw() == 0 {
+        None
+    } else {
+        Some(keysym)
+    }
 }
 
 #[cfg(test)]
@@ -582,7 +653,13 @@ mod tests {
     #[test]
     fn parses_simple_binding() {
         let (mods, sym) = parse_binding("ctrl+q").unwrap();
-        assert_eq!(mods, KeyModifiers { ctrl: true, ..Default::default() });
+        assert_eq!(
+            mods,
+            KeyModifiers {
+                ctrl: true,
+                ..Default::default()
+            }
+        );
         assert_eq!(sym, Keysym::q);
     }
 
@@ -619,14 +696,20 @@ mod tests {
                 if is_bare_modifier_tap(&spec) {
                     continue;
                 }
-                assert!(parse_binding(&spec).is_some(), "default binding {action}={spec} failed to parse");
+                assert!(
+                    parse_binding(&spec).is_some(),
+                    "default binding {action}={spec} failed to parse"
+                );
             }
         }
     }
 
     #[test]
     fn default_toggle_launcher_is_a_bare_super_tap() {
-        assert_eq!(Config::default().super_tap_action(), Some("toggle_launcher"));
+        assert_eq!(
+            Config::default().super_tap_action(),
+            Some("toggle_launcher")
+        );
     }
 
     #[test]
@@ -704,9 +787,14 @@ mod tests {
         let raw: RawConfig = toml::from_str(toml).unwrap();
         assert_eq!(
             raw.outputs["HDMI-A-1"].position,
-            Some(OutputPosition::RightOf { right_of: "eDP-1".to_string() })
+            Some(OutputPosition::RightOf {
+                right_of: "eDP-1".to_string()
+            })
         );
-        assert_eq!(raw.outputs["DP-1"].position, Some(OutputPosition::Absolute { x: 100, y: 200 }));
+        assert_eq!(
+            raw.outputs["DP-1"].position,
+            Some(OutputPosition::Absolute { x: 100, y: 200 })
+        );
         assert!(raw.outputs["eDP-1"].primary);
     }
 
@@ -723,28 +811,48 @@ mod tests {
         let placed = [("eDP-1".to_string(), rect(0, 0, 1920, 1080))];
 
         let right = OutputSettings {
-            position: Some(OutputPosition::RightOf { right_of: "eDP-1".to_string() }),
+            position: Some(OutputPosition::RightOf {
+                right_of: "eDP-1".to_string(),
+            }),
             ..Default::default()
         };
-        assert_eq!(resolve_output_position(&right, "b", size(800, 600), &placed), (1920, 0).into());
+        assert_eq!(
+            resolve_output_position(&right, "b", size(800, 600), &placed),
+            (1920, 0).into()
+        );
 
         let left = OutputSettings {
-            position: Some(OutputPosition::LeftOf { left_of: "eDP-1".to_string() }),
+            position: Some(OutputPosition::LeftOf {
+                left_of: "eDP-1".to_string(),
+            }),
             ..Default::default()
         };
-        assert_eq!(resolve_output_position(&left, "b", size(800, 600), &placed), (-800, 0).into());
+        assert_eq!(
+            resolve_output_position(&left, "b", size(800, 600), &placed),
+            (-800, 0).into()
+        );
 
         let above = OutputSettings {
-            position: Some(OutputPosition::Above { above: "eDP-1".to_string() }),
+            position: Some(OutputPosition::Above {
+                above: "eDP-1".to_string(),
+            }),
             ..Default::default()
         };
-        assert_eq!(resolve_output_position(&above, "b", size(800, 600), &placed), (0, -600).into());
+        assert_eq!(
+            resolve_output_position(&above, "b", size(800, 600), &placed),
+            (0, -600).into()
+        );
 
         let below = OutputSettings {
-            position: Some(OutputPosition::Below { below: "eDP-1".to_string() }),
+            position: Some(OutputPosition::Below {
+                below: "eDP-1".to_string(),
+            }),
             ..Default::default()
         };
-        assert_eq!(resolve_output_position(&below, "b", size(800, 600), &placed), (0, 1080).into());
+        assert_eq!(
+            resolve_output_position(&below, "b", size(800, 600), &placed),
+            (0, 1080).into()
+        );
     }
 
     #[test]
@@ -752,10 +860,15 @@ mod tests {
         let placed = [("eDP-1".to_string(), rect(0, 0, 1920, 1080))];
         let settings = OutputSettings {
             mirror_of: Some("eDP-1".to_string()),
-            position: Some(OutputPosition::RightOf { right_of: "eDP-1".to_string() }),
+            position: Some(OutputPosition::RightOf {
+                right_of: "eDP-1".to_string(),
+            }),
             ..Default::default()
         };
-        assert_eq!(resolve_output_position(&settings, "HDMI-A-1", size(1920, 1080), &placed), (0, 0).into());
+        assert_eq!(
+            resolve_output_position(&settings, "HDMI-A-1", size(1920, 1080), &placed),
+            (0, 0).into()
+        );
     }
 
     #[test]
@@ -770,16 +883,27 @@ mod tests {
 
     #[test]
     fn output_refresh_rate_parses_in_millihertz() {
-        let raw: RawConfig =
-            toml::from_str("[outputs.DP-1]\nrefresh_rate = 144000\n").unwrap();
+        let raw: RawConfig = toml::from_str("[outputs.DP-1]\nrefresh_rate = 144000\n").unwrap();
         assert_eq!(raw.outputs["DP-1"].refresh_rate, Some(144_000));
     }
 
     #[test]
     fn blur_defaults_off_and_parses() {
-        assert_eq!(BlurSettings::default(), BlurSettings { enabled: false, radius: 12 });
+        assert_eq!(
+            BlurSettings::default(),
+            BlurSettings {
+                enabled: false,
+                radius: 12
+            }
+        );
         let raw: RawConfig = toml::from_str("[blur]\nenabled = true\nradius = 20\n").unwrap();
-        assert_eq!(raw.blur, BlurSettings { enabled: true, radius: 20 });
+        assert_eq!(
+            raw.blur,
+            BlurSettings {
+                enabled: true,
+                radius: 20
+            }
+        );
     }
 
     #[test]
@@ -802,9 +926,14 @@ mod tests {
     fn missing_reference_output_falls_back_to_auto_placement() {
         let placed = [("eDP-1".to_string(), rect(0, 0, 1920, 1080))];
         let settings = OutputSettings {
-            position: Some(OutputPosition::RightOf { right_of: "not-connected".to_string() }),
+            position: Some(OutputPosition::RightOf {
+                right_of: "not-connected".to_string(),
+            }),
             ..Default::default()
         };
-        assert_eq!(resolve_output_position(&settings, "b", size(800, 600), &placed), (1920, 0).into());
+        assert_eq!(
+            resolve_output_position(&settings, "b", size(800, 600), &placed),
+            (1920, 0).into()
+        );
     }
 }

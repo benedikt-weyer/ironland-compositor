@@ -30,15 +30,15 @@
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 
-use calloop::channel::{self, Channel};
 use calloop::EventLoop;
+use calloop::channel::{self, Channel};
 use calloop_wayland_source::WaylandSource;
 use serde::{Deserialize, Serialize};
 use wayland_client::backend::ObjectId;
 use wayland_client::globals::registry_queue_init;
 use wayland_client::protocol::wl_output::{self, WlOutput};
 use wayland_client::protocol::wl_registry;
-use wayland_client::{event_created_child, Connection, Dispatch, Proxy, QueueHandle, WEnum};
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum, event_created_child};
 use wayland_protocols::ext::workspace::v1::client::ext_workspace_group_handle_v1::{
     self, ExtWorkspaceGroupHandleV1,
 };
@@ -130,7 +130,11 @@ impl App {
     fn handle_command(&mut self, cmd: Command) {
         match cmd {
             Command::Activate(ActivateCommand { output, index }) => {
-                let Some(group) = self.groups.iter().find(|g| g.output_name.as_deref() == Some(output.as_str())) else {
+                let Some(group) = self
+                    .groups
+                    .iter()
+                    .find(|g| g.output_name.as_deref() == Some(output.as_str()))
+                else {
                     return;
                 };
                 let Some(workspace) = group.workspaces.iter().find(|w| w.index == index) else {
@@ -248,7 +252,9 @@ impl Dispatch<ExtWorkspaceHandleV1, PendingWorkspace> for App {
                     *data.name.lock().unwrap() = Some(name);
                 }
             }
-            ext_workspace_handle_v1::Event::State { state: WEnum::Value(bits) } => {
+            ext_workspace_handle_v1::Event::State {
+                state: WEnum::Value(bits),
+            } => {
                 let active = bits.contains(WsState::Active);
                 if let Some(entry) = existing {
                     entry.active = active;
@@ -314,7 +320,8 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let (globals, event_queue) = registry_queue_init::<App>(&conn).expect("failed to init registry");
+    let (globals, event_queue) =
+        registry_queue_init::<App>(&conn).expect("failed to init registry");
     let qh = event_queue.handle();
 
     let mut app = App {
@@ -325,18 +332,19 @@ fn main() {
 
     for global in globals.contents().clone_list() {
         if global.interface == WlOutput::interface().name {
-            let _: WlOutput = globals
-                .registry()
-                .bind(global.name, global.version.min(WlOutput::interface().version), &qh, ());
+            let _: WlOutput = globals.registry().bind(
+                global.name,
+                global.version.min(WlOutput::interface().version),
+                &qh,
+                (),
+            );
         }
     }
 
     app.manager = match globals.bind::<ExtWorkspaceManagerV1, _, _>(&qh, 1..=1, ()) {
         Ok(manager) => Some(manager),
         Err(err) => {
-            eprintln!(
-                "ironland-workspaces: compositor doesn't support ext-workspace-v1: {err}"
-            );
+            eprintln!("ironland-workspaces: compositor doesn't support ext-workspace-v1: {err}");
             std::process::exit(1);
         }
     };

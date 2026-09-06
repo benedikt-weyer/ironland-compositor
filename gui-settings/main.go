@@ -2,9 +2,8 @@
 // settings file (see src/config.rs in the main crate for the schema this
 // mirrors). It edits the user's own config file at
 // $XDG_CONFIG_HOME/ironland-copositor/config.toml (falling back to
-// ~/.config/...), which the compositor reads at startup ahead of the
-// system-wide file a NixOS module may have written to /etc. Changes need a
-// compositor restart to take effect.
+// ~/.config/...), which the compositor watches ahead of the system-wide file
+// a NixOS module may have written to /etc. Saved changes apply live.
 package main
 
 import (
@@ -40,7 +39,7 @@ func main() {
 			dialog.ShowError(fmt.Errorf("saving settings: %w", err), w)
 			return
 		}
-		status.SetText(fmt.Sprintf("Saved to %s. Restart the compositor to apply.", path))
+		status.SetText(fmt.Sprintf("Saved to %s. Changes applied live.", path))
 	})
 	saveButton.Importance = widget.HighImportance
 
@@ -212,7 +211,7 @@ func buildAppearanceTab(cfg *Config, w fyne.Window) fyne.CanvasObject {
 
 	wallpaperHint := widget.NewLabel(
 		"Path to an image file (PNG/JPEG/WebP) used as the desktop background, scaled and center-cropped to" +
-			" cover each output. Needs a compositor restart to take effect.",
+			" cover each output. Changes apply when saved.",
 	)
 	wallpaperHint.Wrapping = fyne.TextWrapWord
 
@@ -242,7 +241,7 @@ func buildAppearanceTab(cfg *Config, w fyne.Window) fyne.CanvasObject {
 			func() { blurRadius.SetText(fmt.Sprintf("%d", defaults.Blur.Radius)) },
 		)),
 	)
-	blurHint := widget.NewLabel("Gaussian blur is visible through transparent and translucent parts of application windows. Higher radii are smoother but require more work when the wallpaper changes or an output is resized. A compositor restart is required.")
+	blurHint := widget.NewLabel("Gaussian blur is visible through transparent and translucent parts of application windows. Higher radii are smoother but require more work when the wallpaper changes or an output is resized. Changes apply when saved.")
 	blurHint.Wrapping = fyne.TextWrapWord
 
 	darkModeRow := resets.item(darkMode,

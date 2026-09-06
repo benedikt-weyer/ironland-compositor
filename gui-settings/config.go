@@ -302,8 +302,9 @@ func loadConfig() (Config, string) {
 	return cfg, ""
 }
 
-// saveConfig writes cfg to the user's config file, creating its parent
-// directory if needed, and returns the path it wrote to.
+// saveConfig atomically writes cfg to the user's config file, creating its
+// parent directory if needed. Atomic replacement ensures the compositor's
+// live-reload watcher never observes a partially encoded TOML document.
 func saveConfig(cfg Config) (string, error) {
 	path, err := userConfigPath()
 	if err != nil {
@@ -313,13 +314,29 @@ func saveConfig(cfg Config) (string, error) {
 		return "", err
 	}
 
-	f, err := os.Create(path)
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".config.toml.*")
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
 
-	if err := toml.NewEncoder(f).Encode(cfg); err != nil {
+	if err := temporary.Chmod(0o644); err != nil {
+		temporary.Close()
+		return "", err
+	}
+	if err := toml.NewEncoder(temporary).Encode(cfg); err != nil {
+		temporary.Close()
+		return "", err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return "", err
+	}
+	if err := temporary.Close(); err != nil {
+		return "", err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
 		return "", err
 	}
 	return path, nil

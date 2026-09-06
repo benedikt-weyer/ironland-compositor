@@ -3,7 +3,7 @@ use std::os::unix::io::OwnedFd;
 use std::{
     collections::HashMap,
     sync::{Arc, atomic::AtomicBool},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use tracing::{info, warn};
@@ -12,7 +12,8 @@ use smithay::{
     backend::{
         input::TabletToolDescriptor,
         renderer::element::{
-            RenderElementStates, default_primary_scanout_output_compare, utils::select_dmabuf_feedback,
+            RenderElementStates, default_primary_scanout_output_compare,
+            utils::select_dmabuf_feedback,
         },
     },
     delegate_dispatch2,
@@ -36,7 +37,8 @@ use smithay::{
     reexports::{
         calloop::{Interest, LoopHandle, Mode, PostAction, generic::Generic},
         wayland_protocols::xdg::decoration::{
-            self as xdg_decoration, zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode,
+            self as xdg_decoration,
+            zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode,
         },
         wayland_server::{
             Client, Display, DisplayHandle, Resource,
@@ -47,38 +49,49 @@ use smithay::{
     utils::{Clock, Logical, Monotonic, Point, Rectangle, Serial, Time},
     wayland::{
         commit_timing::{CommitTimerBarrierStateUserData, CommitTimingManagerState},
-        compositor::{CompositorClientState, CompositorHandler, CompositorState, get_parent, with_states},
+        compositor::{
+            CompositorClientState, CompositorHandler, CompositorState, get_parent, with_states,
+        },
         dmabuf::DmabufFeedback,
         fifo::{FifoBarrierCachedState, FifoManagerState},
         fixes::FixesState,
-        fractional_scale::{FractionalScaleHandler, FractionalScaleManagerState, with_fractional_scale},
+        fractional_scale::{
+            FractionalScaleHandler, FractionalScaleManagerState, with_fractional_scale,
+        },
         image_capture_source::{
             ImageCaptureSource, ImageCaptureSourceHandler, ImageCaptureSourceState,
             OutputCaptureSourceHandler, OutputCaptureSourceState,
         },
         image_copy_capture::{
-            BufferConstraints, Frame, ImageCopyCaptureHandler, ImageCopyCaptureState, Session, SessionRef,
+            BufferConstraints, Frame, ImageCopyCaptureHandler, ImageCopyCaptureState, Session,
+            SessionRef,
         },
         input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface},
         keyboard_shortcuts_inhibit::{
-            KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor,
+            KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState,
+            KeyboardShortcutsInhibitor,
         },
         output::{OutputHandler, OutputManagerState},
         pointer_constraints::{
-            ConstraintRemove, PointerConstraint, PointerConstraintsHandler, PointerConstraintsState,
-            with_pointer_constraint,
+            ConstraintRemove, PointerConstraint, PointerConstraintsHandler,
+            PointerConstraintsState, with_pointer_constraint,
         },
         pointer_gestures::PointerGesturesState,
         presentation::PresentationState,
         relative_pointer::RelativePointerManagerState,
         seat::WaylandFocus,
         security_context::{
-            SecurityContext, SecurityContextHandler, SecurityContextListenerSource, SecurityContextState,
+            SecurityContext, SecurityContextHandler, SecurityContextListenerSource,
+            SecurityContextState,
         },
         selection::{
             SelectionHandler,
-            data_device::{DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler, set_data_device_focus},
-            primary_selection::{PrimarySelectionHandler, PrimarySelectionState, set_primary_focus},
+            data_device::{
+                DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler, set_data_device_focus,
+            },
+            primary_selection::{
+                PrimarySelectionHandler, PrimarySelectionState, set_primary_focus,
+            },
             wlr_data_control::{DataControlHandler, DataControlState},
         },
         shell::{
@@ -200,7 +213,11 @@ pub struct AnvilState<BackendData: Backend + 'static> {
 
     /// Resolved keybinding table, built once at startup from `config::Config`
     /// (see `input_handler::compile_keybindings`).
-    pub(crate) keybindings: Vec<(crate::config::KeyModifiers, Keysym, crate::input_handler::KeyAction)>,
+    pub(crate) keybindings: Vec<(
+        crate::config::KeyModifiers,
+        Keysym,
+        crate::input_handler::KeyAction,
+    )>,
 
     /// Action to fire when the Super key is tapped alone (see
     /// `config::Config::super_tap_action`), if one is configured.
@@ -214,6 +231,10 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     /// kept around so backends can consult output placement/mirroring/primary
     /// settings as monitors connect.
     pub config: crate::config::Config,
+
+    /// Last time the effective config file was checked. Both backends call
+    /// the same inexpensive polling hook from their event loops.
+    config_last_checked: Instant,
 }
 
 #[derive(Debug)]
@@ -284,7 +305,12 @@ impl<BackendData: Backend> SelectionHandler for AnvilState<BackendData> {
     type SelectionUserData = ();
 
     #[cfg(feature = "xwayland")]
-    fn new_selection(&mut self, ty: SelectionTarget, source: Option<SelectionSource>, _seat: Seat<Self>) {
+    fn new_selection(
+        &mut self,
+        ty: SelectionTarget,
+        source: Option<SelectionSource>,
+        _seat: Seat<Self>,
+    ) {
         if let Some(xwm) = self.xwm.as_mut() {
             if let Err(err) = xwm.new_selection(ty, source.map(|source| source.mime_types())) {
                 warn!(?err, ?ty, "Failed to set Xwayland selection");
@@ -381,7 +407,9 @@ impl<BackendData: Backend> InputMethodHandler for AnvilState<BackendData> {
     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, smithay::utils::Logical> {
         self.space
             .elements()
-            .find_map(|window| (window.wl_surface().as_deref() == Some(parent)).then(|| window.geometry()))
+            .find_map(|window| {
+                (window.wl_surface().as_deref() == Some(parent)).then(|| window.geometry())
+            })
             .unwrap_or_default()
     }
 }
@@ -431,7 +459,8 @@ impl<BackendData: Backend> PointerConstraintsHandler for AnvilState<BackendData>
                         .space
                         .elements()
                         .find_map(|window| {
-                            (window.wl_surface().as_deref() == Some(&hint_surface)).then(|| window.geometry())
+                            (window.wl_surface().as_deref() == Some(&hint_surface))
+                                .then(|| window.geometry())
                         })
                         .unwrap_or_default()
                         .loc
@@ -576,8 +605,9 @@ impl<BackendData: Backend> FractionalScaleHandler for AnvilState<BackendData> {
                             })
                         })
                     } else {
-                        self.window_for_surface(&root)
-                            .and_then(|window| self.space.outputs_for_element(&window).first().cloned())
+                        self.window_for_surface(&root).and_then(|window| {
+                            self.space.outputs_for_element(&window).first().cloned()
+                        })
                     }
                 })
                 .or_else(|| self.space.outputs().next().cloned());
@@ -591,7 +621,11 @@ impl<BackendData: Backend> FractionalScaleHandler for AnvilState<BackendData> {
 }
 
 impl<BackendData: Backend + 'static> SecurityContextHandler for AnvilState<BackendData> {
-    fn context_created(&mut self, source: SecurityContextListenerSource, security_context: SecurityContext) {
+    fn context_created(
+        &mut self,
+        source: SecurityContextListenerSource,
+        security_context: SecurityContext,
+    ) {
         self.handle
             .insert_source(source, move |client_stream, _, data| {
                 let client_state = ClientState {
@@ -847,7 +881,161 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             super_tap_action,
             super_tap_pending: None,
             config,
+            config_last_checked: Instant::now(),
         }
+    }
+
+    /// Reloads and applies the effective config after it changes on disk.
+    /// Invalid TOML is deliberately ignored so the currently running setup
+    /// remains intact while the user fixes the file.
+    pub fn reload_config_if_changed(&mut self) {
+        if self.config_last_checked.elapsed() < Duration::from_millis(200) {
+            return;
+        }
+        self.config_last_checked = Instant::now();
+
+        let (new_config, path) = match crate::config::Config::try_load() {
+            Ok(loaded) => loaded,
+            Err(err) => {
+                warn!(%err, "Config reload skipped");
+                return;
+            }
+        };
+        if new_config == self.config {
+            return;
+        }
+
+        self.apply_config(new_config);
+        info!(path = ?path, "Applied compositor config without restarting");
+    }
+
+    fn apply_config(&mut self, new_config: crate::config::Config) {
+        let old_config = self.config.clone();
+
+        if new_config.keyboard != old_config.keyboard {
+            let keyboard_settings = new_config.keyboard.clone();
+            if let Some(keyboard) = self.seat.get_keyboard()
+                && let Err(err) = keyboard.set_xkb_config(self, keyboard_settings.to_xkb_config())
+            {
+                warn!(
+                    ?err,
+                    "Failed to apply keyboard config; keeping the previous keymap"
+                );
+            }
+        }
+
+        self.keybindings = crate::input_handler::compile_keybindings(&new_config);
+        self.super_tap_action = crate::input_handler::compile_super_tap_action(&new_config);
+        self.super_tap_pending = None;
+
+        if new_config.wallpaper != old_config.wallpaper {
+            self.wallpaper = crate::wallpaper::Wallpaper::load(new_config.wallpaper.as_deref());
+        }
+
+        let top_bar_changed = new_config.top_bar != old_config.top_bar;
+        self.config = new_config;
+
+        if top_bar_changed {
+            use xdg_decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
+            let mode = if self.config.top_bar {
+                Mode::ServerSide
+            } else {
+                Mode::ClientSide
+            };
+            let windows: Vec<_> = self.space.elements().cloned().collect();
+            for window in windows {
+                window.set_ssd(self.config.top_bar);
+                if let Some(toplevel) = window.0.toplevel() {
+                    toplevel.with_pending_state(|state| state.decoration_mode = Some(mode));
+                    if toplevel.is_initial_configure_sent() {
+                        toplevel.send_pending_configure();
+                    }
+                }
+            }
+        }
+
+        if self.config.workspaces != old_config.workspaces {
+            crate::shell::workspace::apply_config(self);
+        }
+        if self.config.outputs != old_config.outputs {
+            BackendData::apply_output_config(self, &old_config);
+            self.apply_output_positions();
+        }
+        crate::ext_workspace::ext_workspace_sync(self);
+    }
+
+    fn apply_output_positions(&mut self) {
+        let mut pending: Vec<Output> = self.space.outputs().cloned().collect();
+        let connected_names: Vec<String> = pending.iter().map(Output::name).collect();
+        let mut placed: Vec<(String, Rectangle<i32, Logical>)> = Vec::new();
+
+        while !pending.is_empty() {
+            let ready = pending.iter().position(|output| {
+                let settings = self.config.output_settings(&output.name());
+                let reference =
+                    settings
+                        .mirror_of
+                        .as_ref()
+                        .or_else(|| match settings.position.as_ref() {
+                            Some(crate::config::OutputPosition::RightOf { right_of }) => {
+                                Some(right_of)
+                            }
+                            Some(crate::config::OutputPosition::LeftOf { left_of }) => {
+                                Some(left_of)
+                            }
+                            Some(crate::config::OutputPosition::Above { above }) => Some(above),
+                            Some(crate::config::OutputPosition::Below { below }) => Some(below),
+                            _ => None,
+                        });
+                reference.is_none_or(|name| {
+                    !connected_names.contains(name) || placed.iter().any(|(n, _)| n == name)
+                })
+            });
+
+            // A cycle in relative placement cannot be satisfied. Resolve one
+            // member with the normal fallback, then the remainder can follow.
+            let output = pending.remove(ready.unwrap_or(0));
+            let geometry = self.space.output_geometry(&output).unwrap_or_default();
+            let position = crate::config::resolve_output_position(
+                &self.config.output_settings(&output.name()),
+                &output.name(),
+                geometry.size,
+                &placed,
+            );
+            self.space.map_output(&output, position);
+            placed.push((output.name(), Rectangle::new(position, geometry.size)));
+        }
+
+        if let Some(primary) = self.config.primary_output_name() {
+            let outputs: Vec<(Output, Point<i32, Logical>)> = self
+                .space
+                .outputs()
+                .map(|output| {
+                    (
+                        output.clone(),
+                        self.space.output_geometry(output).unwrap().loc,
+                    )
+                })
+                .collect();
+            if outputs.iter().any(|(output, _)| output.name() == primary) {
+                for (output, _) in &outputs {
+                    self.space.unmap_output(output);
+                }
+                for (output, location) in outputs
+                    .iter()
+                    .filter(|(output, _)| output.name() == primary)
+                {
+                    self.space.map_output(output, *location);
+                }
+                for (output, location) in outputs
+                    .iter()
+                    .filter(|(output, _)| output.name() != primary)
+                {
+                    self.space.map_output(output, *location);
+                }
+            }
+        }
+        self.space.refresh();
     }
 
     #[cfg(feature = "xwayland")]
@@ -882,9 +1070,13 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
                         .unwrap_or(1.);
                     data.client_compositor_state(&client)
                         .set_client_scale(xwayland_scale);
-                    let mut wm =
-                        X11Wm::start_wm(data.handle.clone(), &display_handle, x11_socket, client.clone())
-                            .expect("Failed to attach X11 Window Manager");
+                    let mut wm = X11Wm::start_wm(
+                        data.handle.clone(),
+                        &display_handle,
+                        x11_socket,
+                        client.clone(),
+                    )
+                    .expect("Failed to attach X11 Window Manager");
 
                     let cursor = Cursor::load();
                     let image = cursor.get_image(1, Duration::ZERO);
@@ -902,7 +1094,10 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
                 }
             });
         if let Err(e) = ret {
-            tracing::error!("Failed to insert the XWaylandSource into the event loop: {}", e);
+            tracing::error!(
+                "Failed to insert the XWaylandSource into the event loop: {}",
+                e
+            );
         }
     }
 }
@@ -975,7 +1170,8 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
 
         let dh = self.display_handle.clone();
         for client in clients.into_values() {
-            self.client_compositor_state(&client).blocker_cleared(self, &dh);
+            self.client_compositor_state(&client)
+                .blocker_cleared(self, &dh);
         }
     }
 
@@ -998,7 +1194,8 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
 
                 if let Some(output) = primary_scanout_output.as_ref() {
                     with_fractional_scale(states, |fraction_scale| {
-                        fraction_scale.set_preferred_scale(output.current_scale().fractional_scale());
+                        fraction_scale
+                            .set_preferred_scale(output.current_scale().fractional_scale());
                     });
                 }
 
@@ -1025,14 +1222,18 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             if self.space.outputs_for_element(window).contains(output) {
                 window.send_frame(output, time, throttle, surface_primary_scanout_output);
                 if let Some(dmabuf_feedback) = dmabuf_feedback.as_ref() {
-                    window.send_dmabuf_feedback(output, surface_primary_scanout_output, |surface, _| {
-                        select_dmabuf_feedback(
-                            surface,
-                            render_element_states,
-                            &dmabuf_feedback.render_feedback,
-                            &dmabuf_feedback.scanout_feedback,
-                        )
-                    });
+                    window.send_dmabuf_feedback(
+                        output,
+                        surface_primary_scanout_output,
+                        |surface, _| {
+                            select_dmabuf_feedback(
+                                surface,
+                                render_element_states,
+                                &dmabuf_feedback.render_feedback,
+                                &dmabuf_feedback.scanout_feedback,
+                            )
+                        },
+                    );
                 }
             }
         });
@@ -1043,7 +1244,8 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
 
                 if let Some(output) = primary_scanout_output.as_ref() {
                     with_fractional_scale(states, |fraction_scale| {
-                        fraction_scale.set_preferred_scale(output.current_scale().fractional_scale());
+                        fraction_scale
+                            .set_preferred_scale(output.current_scale().fractional_scale());
                     });
                 }
 
@@ -1069,14 +1271,18 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
 
             layer_surface.send_frame(output, time, throttle, surface_primary_scanout_output);
             if let Some(dmabuf_feedback) = dmabuf_feedback.as_ref() {
-                layer_surface.send_dmabuf_feedback(output, surface_primary_scanout_output, |surface, _| {
-                    select_dmabuf_feedback(
-                        surface,
-                        render_element_states,
-                        &dmabuf_feedback.render_feedback,
-                        &dmabuf_feedback.scanout_feedback,
-                    )
-                });
+                layer_surface.send_dmabuf_feedback(
+                    output,
+                    surface_primary_scanout_output,
+                    |surface, _| {
+                        select_dmabuf_feedback(
+                            surface,
+                            render_element_states,
+                            &dmabuf_feedback.render_feedback,
+                            &dmabuf_feedback.scanout_feedback,
+                        )
+                    },
+                );
             }
         }
         // Drop the lock to the layer map before calling blocker_cleared, which might end up
@@ -1089,7 +1295,8 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
 
                 if let Some(output) = primary_scanout_output.as_ref() {
                     with_fractional_scale(states, |fraction_scale| {
-                        fraction_scale.set_preferred_scale(output.current_scale().fractional_scale());
+                        fraction_scale
+                            .set_preferred_scale(output.current_scale().fractional_scale());
                     });
                 }
 
@@ -1120,7 +1327,8 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
 
                 if let Some(output) = primary_scanout_output.as_ref() {
                     with_fractional_scale(states, |fraction_scale| {
-                        fraction_scale.set_preferred_scale(output.current_scale().fractional_scale());
+                        fraction_scale
+                            .set_preferred_scale(output.current_scale().fractional_scale());
                     });
                 }
 
@@ -1147,7 +1355,8 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
 
         let dh = self.display_handle.clone();
         for client in clients.into_values() {
-            self.client_compositor_state(&client).blocker_cleared(self, &dh);
+            self.client_compositor_state(&client)
+                .blocker_cleared(self, &dh);
         }
     }
 }
@@ -1232,7 +1441,11 @@ pub fn take_presentation_feedback(
                 &mut output_presentation_feedback,
                 surface_primary_scanout_output,
                 |surface, _| {
-                    surface_presentation_feedback_flags_from_states(surface, None, render_element_states)
+                    surface_presentation_feedback_flags_from_states(
+                        surface,
+                        None,
+                        render_element_states,
+                    )
                 },
             );
         }
@@ -1243,7 +1456,11 @@ pub fn take_presentation_feedback(
             &mut output_presentation_feedback,
             surface_primary_scanout_output,
             |surface, _| {
-                surface_presentation_feedback_flags_from_states(surface, None, render_element_states)
+                surface_presentation_feedback_flags_from_states(
+                    surface,
+                    None,
+                    render_element_states,
+                )
             },
         );
     }
@@ -1258,4 +1475,9 @@ pub trait Backend {
     fn reset_buffers(&mut self, output: &Output);
     fn early_import(&mut self, surface: &WlSurface);
     fn update_led_state(&mut self, led_state: LedState);
+    fn apply_output_config(_state: &mut AnvilState<Self>, _old_config: &crate::config::Config)
+    where
+        Self: Sized,
+    {
+    }
 }

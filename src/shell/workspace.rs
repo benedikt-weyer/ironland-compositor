@@ -68,7 +68,9 @@ pub struct WorkspaceState {
 
 impl WorkspaceState {
     pub fn get(output: &Output) -> &WorkspaceState {
-        output.user_data().insert_if_missing(WorkspaceState::default);
+        output
+            .user_data()
+            .insert_if_missing(WorkspaceState::default);
         let state = output.user_data().get::<WorkspaceState>().unwrap();
         // Lazily-created state (e.g. touched before `init_output` runs)
         // still needs at least one workspace to be usable.
@@ -126,6 +128,63 @@ pub fn init_output(config: &Config, space: &Space<WindowElement>, output: &Outpu
     *ws.count.borrow_mut() = count;
 }
 
+/// Applies changed workspace settings to every connected output. When a
+/// fixed count shrinks, windows from removed slots are preserved by moving
+/// them into the new last workspace before the public workspace list is
+/// updated.
+pub fn apply_config<B: Backend>(state: &mut AnvilState<B>) {
+    let outputs: Vec<Output> = state.space.outputs().cloned().collect();
+    let count = state.config.workspaces.count.max(1);
+
+    for output in &outputs {
+        let old_count = WorkspaceState::get(output)
+            .count()
+            .max(tiling::TilingState::len(output));
+        let destination = count - 1;
+        let area = tiling::tiling_area(&state.space, output);
+
+        for idx in count..old_count {
+            let tiled = tiling::TilingState::tree(output, idx).windows();
+            for window in tiled {
+                tiling::TilingState::tree_mut(output, idx).remove(&window);
+                tiling::TilingState::tree_mut(output, destination).insert(
+                    window.clone(),
+                    area,
+                    None,
+                );
+                *WindowHome::get(&window).index.borrow_mut() = destination;
+            }
+
+            let floating = WorkspaceState::get(output).floating_at(idx);
+            WorkspaceState::get(output).floating_slot(idx).clear();
+            for window in floating {
+                *WindowHome::get(&window).index.borrow_mut() = destination;
+                let mut destination_slot = WorkspaceState::get(output).floating_slot(destination);
+                if !destination_slot.contains(&window) {
+                    destination_slot.push(window);
+                }
+            }
+        }
+        *WorkspaceState::get(output).count.borrow_mut() = count;
+    }
+
+    let combined_active = outputs
+        .first()
+        .map(|output| WorkspaceState::get(output).active().min(count - 1))
+        .unwrap_or(0);
+    for output in &outputs {
+        let target = if state.config.workspaces.mode == WorkspaceMode::Combined {
+            combined_active
+        } else {
+            WorkspaceState::get(output).active().min(count - 1)
+        };
+        set_active(state, output, target);
+        // `set_active` returns early if the index was already right; make
+        // sure a reduced destination workspace is reflowed either way.
+        tiling::apply_layout(state, output);
+    }
+}
+
 /// Registers a newly mapped window (tiled or floating) as belonging to
 /// `output`'s currently active workspace.
 pub fn assign_new_window(window: &WindowElement, output: &Output, floating: bool) {
@@ -144,7 +203,12 @@ pub fn assign_new_window(window: &WindowElement, output: &Output, floating: bool
 /// Records that `window` just became floating, having been pulled out of
 /// `output`'s workspace `idx` tiling tree. Tracks its current on-screen
 /// position (if mapped) so it reappears there next time that workspace is shown.
-pub fn mark_floating<B: Backend>(state: &AnvilState<B>, window: &WindowElement, output: &Output, idx: usize) {
+pub fn mark_floating<B: Backend>(
+    state: &AnvilState<B>,
+    window: &WindowElement,
+    output: &Output,
+    idx: usize,
+) {
     let home = WindowHome::get(window);
     *home.output.borrow_mut() = Some(output.clone());
     *home.index.borrow_mut() = idx;
@@ -231,7 +295,10 @@ fn show_workspace<B: Backend>(state: &mut AnvilState<B>, output: &Output, idx: u
     }
     let floating = ws.floating_at(idx);
     for window in floating {
-        let pos = WindowHome::get(&window).floating_pos.borrow().unwrap_or_default();
+        let pos = WindowHome::get(&window)
+            .floating_pos
+            .borrow()
+            .unwrap_or_default();
         state.space.map_element(window, pos, false);
     }
 }
@@ -241,7 +308,12 @@ fn focus_first_in_workspace<B: Backend>(state: &mut AnvilState<B>, output: &Outp
         .windows()
         .into_iter()
         .find(|w| w.alive())
-        .or_else(|| WorkspaceState::get(output).floating_at(idx).into_iter().find(|w| w.alive()));
+        .or_else(|| {
+            WorkspaceState::get(output)
+                .floating_at(idx)
+                .into_iter()
+                .find(|w| w.alive())
+        });
 
     match candidate {
         Some(window) => tiling::raise_and_focus(state, &window),
@@ -300,7 +372,12 @@ fn set_active<B: Backend>(state: &mut AnvilState<B>, output: &Output, new_idx: u
 /// of bounds.
 pub fn switch_workspace<B: Backend>(state: &mut AnvilState<B>, output: &Output, delta: i32) {
     let ws = WorkspaceState::get(output);
-    let Some(new_idx) = target_index(ws.active(), ws.count(), delta, state.config.workspaces.dynamic) else {
+    let Some(new_idx) = target_index(
+        ws.active(),
+        ws.count(),
+        delta,
+        state.config.workspaces.dynamic,
+    ) else {
         return;
     };
 
@@ -334,7 +411,8 @@ pub fn move_focused_window<B: Backend>(state: &mut AnvilState<B>, delta: i32) {
 
     let ws = WorkspaceState::get(&output);
     let active = ws.active();
-    let Some(target_idx) = target_index(active, ws.count(), delta, state.config.workspaces.dynamic) else {
+    let Some(target_idx) = target_index(active, ws.count(), delta, state.config.workspaces.dynamic)
+    else {
         return;
     };
     if target_idx == active {
@@ -346,7 +424,9 @@ pub fn move_focused_window<B: Backend>(state: &mut AnvilState<B>, delta: i32) {
     if was_tiled {
         tiling::TilingState::tree_mut(&output, active).remove(&window);
     } else {
-        WorkspaceState::get(&output).floating_slot(active).retain(|w| w != &window);
+        WorkspaceState::get(&output)
+            .floating_slot(active)
+            .retain(|w| w != &window);
     }
 
     let home = WindowHome::get(&window);
@@ -364,7 +444,9 @@ pub fn move_focused_window<B: Backend>(state: &mut AnvilState<B>, delta: i32) {
         tiling::apply_layout(state, &output);
         state.space.unmap_elem(&window);
     } else {
-        WorkspaceState::get(&output).floating_slot(target_idx).push(window.clone());
+        WorkspaceState::get(&output)
+            .floating_slot(target_idx)
+            .push(window.clone());
         if let Some(loc) = state.space.element_location(&window) {
             *home.floating_pos.borrow_mut() = Some(loc);
         }
@@ -408,9 +490,18 @@ pub fn overlay_info(output: &Output) -> (usize, usize) {
 /// Every window belonging to `output`, across *every* workspace it has (not
 /// just the active one) - tiled and floating alike.
 fn all_windows_on_output(output: &Output) -> Vec<WindowElement> {
-    let mut windows: Vec<WindowElement> =
-        tiling::TilingState::all(output).iter().flat_map(tiling::TilingLayout::windows).collect();
-    windows.extend(WorkspaceState::get(output).floating.borrow().iter().flatten().cloned());
+    let mut windows: Vec<WindowElement> = tiling::TilingState::all(output)
+        .iter()
+        .flat_map(tiling::TilingLayout::windows)
+        .collect();
+    windows.extend(
+        WorkspaceState::get(output)
+            .floating
+            .borrow()
+            .iter()
+            .flatten()
+            .cloned(),
+    );
     windows
 }
 
@@ -420,7 +511,11 @@ fn all_windows_on_output(output: &Output) -> Vec<WindowElement> {
 /// `state.space.elements()`, which only sees the *visible* (active-workspace)
 /// ones.
 pub(crate) fn all_windows<B: Backend>(state: &AnvilState<B>) -> Vec<WindowElement> {
-    state.space.outputs().flat_map(all_windows_on_output).collect()
+    state
+        .space
+        .outputs()
+        .flat_map(all_windows_on_output)
+        .collect()
 }
 
 /// The output+workspace `window` is currently homed to (tiled or floating),

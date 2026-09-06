@@ -9,8 +9,8 @@ use smithay::{backend::renderer::DebugFlags, input::tablet};
 
 use smithay::{
     backend::input::{
-        self, Axis, AxisSource, Device, DeviceCapability, Event, InputBackend, InputEvent, InputTime,
-        KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent, TouchEvent,
+        self, Axis, AxisSource, Device, DeviceCapability, Event, InputBackend, InputEvent,
+        InputTime, KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent, TouchEvent,
     },
     desktop::{WindowSurfaceType, layer_map_for_output},
     input::{
@@ -43,16 +43,17 @@ use crate::state::Backend;
 use smithay::{
     backend::{
         input::{
-            GestureBeginEvent, GestureEndEvent, GesturePinchUpdateEvent as _, GestureSwipeUpdateEvent as _,
-            PointerMotionEvent, ProximityState, TabletToolButtonEvent, TabletToolEvent,
-            TabletToolProximityEvent, TabletToolTipEvent, TabletToolTipState,
+            GestureBeginEvent, GestureEndEvent, GesturePinchUpdateEvent as _,
+            GestureSwipeUpdateEvent as _, PointerMotionEvent, ProximityState,
+            TabletToolButtonEvent, TabletToolEvent, TabletToolProximityEvent, TabletToolTipEvent,
+            TabletToolTipState,
         },
         session::Session,
     },
     input::pointer::{
         GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
-        GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
-        RelativeMotionEvent,
+        GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent,
+        GestureSwipeUpdateEvent, RelativeMotionEvent,
     },
     reexports::wayland_server::DisplayHandle,
     wayland::{
@@ -70,7 +71,10 @@ impl<BackendData: Backend> AnvilState<BackendData> {
     /// inherited `DISPLAY` so X11-capable toolkits can't quietly reconnect to
     /// the host's X server instead of rendering here. `None` means "unset".
     fn compositor_envs(&self) -> impl Iterator<Item = (&'static str, Option<String>)> {
-        let wayland_display = self.socket_name.clone().map(|v| ("WAYLAND_DISPLAY", Some(v)));
+        let wayland_display = self
+            .socket_name
+            .clone()
+            .map(|v| ("WAYLAND_DISPLAY", Some(v)));
 
         #[cfg(feature = "xwayland")]
         let display = Some(("DISPLAY", self.xdisplay.map(|v| format!(":{v}"))));
@@ -88,7 +92,10 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             ("NIXOS_OZONE_WL", Some("1".to_string())),
         ];
 
-        wayland_display.into_iter().chain(display).chain(force_wayland)
+        wayland_display
+            .into_iter()
+            .chain(display)
+            .chain(force_wayland)
     }
 
     /// Applies [`compositor_envs`](Self::compositor_envs) to `cmd`, setting or
@@ -168,12 +175,13 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     if let Some(toplevel) = element.0.toplevel() {
                         let mode_changed = toplevel.with_pending_state(|state| {
                             if let Some(current_mode) = state.decoration_mode {
-                                let new_mode =
-                                    if current_mode == zxdg_toplevel_decoration_v1::Mode::ClientSide {
-                                        zxdg_toplevel_decoration_v1::Mode::ServerSide
-                                    } else {
-                                        zxdg_toplevel_decoration_v1::Mode::ClientSide
-                                    };
+                                let new_mode = if current_mode
+                                    == zxdg_toplevel_decoration_v1::Mode::ClientSide
+                                {
+                                    zxdg_toplevel_decoration_v1::Mode::ServerSide
+                                } else {
+                                    zxdg_toplevel_decoration_v1::Mode::ClientSide
+                                };
                                 state.decoration_mode = Some(new_mode);
                                 true
                             } else {
@@ -190,15 +198,22 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
             KeyAction::ToggleFloating => {
                 if let Some(keyboard) = self.seat.get_keyboard() {
-                    if let Some(crate::focus::KeyboardFocusTarget::Window(w)) = keyboard.current_focus() {
-                        crate::shell::tiling::toggle_floating(self, &crate::shell::WindowElement(w));
+                    if let Some(crate::focus::KeyboardFocusTarget::Window(w)) =
+                        keyboard.current_focus()
+                    {
+                        crate::shell::tiling::toggle_floating(
+                            self,
+                            &crate::shell::WindowElement(w),
+                        );
                     }
                 }
             }
 
             KeyAction::KillWindow => {
                 if let Some(keyboard) = self.seat.get_keyboard() {
-                    if let Some(crate::focus::KeyboardFocusTarget::Window(w)) = keyboard.current_focus() {
+                    if let Some(crate::focus::KeyboardFocusTarget::Window(w)) =
+                        keyboard.current_focus()
+                    {
                         #[allow(irrefutable_let_patterns)]
                         if let Some(toplevel) = w.toplevel() {
                             toplevel.send_close();
@@ -278,84 +293,94 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             .unwrap_or(false);
 
         let action = keyboard
-            .input(self, keycode, state, serial, time, |data, modifiers, handle| {
-                let keysym = handle.modified_sym();
+            .input(
+                self,
+                keycode,
+                state,
+                serial,
+                time,
+                |data, modifiers, handle| {
+                    let keysym = handle.modified_sym();
 
-                debug!(
-                    ?state,
-                    mods = ?modifiers,
-                    keysym = ::xkbcommon::xkb::keysym_get_name(keysym),
-                    "keysym"
-                );
+                    debug!(
+                        ?state,
+                        mods = ?modifiers,
+                        keysym = ::xkbcommon::xkb::keysym_get_name(keysym),
+                        "keysym"
+                    );
 
-                // Track whether Super is being tapped alone (pressed and
-                // released with no other key in between), to fire the
-                // configured `super_tap_action` (see `config::Config::
-                // super_tap_action`). The Super key itself is always
-                // forwarded to the focused client like any other modifier
-                // key - only a successful tap's release is intercepted, the
-                // same trade-off other compositors make for this feature.
-                if is_super_keysym(keysym) {
-                    return if let KeyState::Pressed = state {
-                        if data.super_tap_pending.is_none() {
-                            data.super_tap_pending = Some(true);
-                        }
-                        FilterResult::Forward
-                    } else {
-                        let was_tap = data.super_tap_pending == Some(true);
-                        data.super_tap_pending = None;
-                        match (was_tap, inhibited, &data.super_tap_action) {
-                            (true, false, Some(action)) => FilterResult::Intercept(action.clone()),
-                            _ => FilterResult::Forward,
-                        }
-                    };
-                } else if let KeyState::Pressed = state {
-                    data.super_tap_pending = Some(false);
-                }
-
-                // While the launcher overlay is open it grabs the whole keyboard:
-                // every key is consumed here instead of being forwarded to the
-                // focused client, whether or not it maps to a launcher action.
-                if data.launcher.is_visible() && !(modifiers.ctrl && keysym == Keysym::space) {
-                    if let KeyState::Pressed = state {
-                        let action = launcher_key_action(keysym);
-                        suppressed_keys.push(keysym);
-                        return FilterResult::Intercept(action);
-                    } else {
-                        suppressed_keys.retain(|k| *k != keysym);
-                        return FilterResult::Intercept(KeyAction::None);
+                    // Track whether Super is being tapped alone (pressed and
+                    // released with no other key in between), to fire the
+                    // configured `super_tap_action` (see `config::Config::
+                    // super_tap_action`). The Super key itself is always
+                    // forwarded to the focused client like any other modifier
+                    // key - only a successful tap's release is intercepted, the
+                    // same trade-off other compositors make for this feature.
+                    if is_super_keysym(keysym) {
+                        return if let KeyState::Pressed = state {
+                            if data.super_tap_pending.is_none() {
+                                data.super_tap_pending = Some(true);
+                            }
+                            FilterResult::Forward
+                        } else {
+                            let was_tap = data.super_tap_pending == Some(true);
+                            data.super_tap_pending = None;
+                            match (was_tap, inhibited, &data.super_tap_action) {
+                                (true, false, Some(action)) => {
+                                    FilterResult::Intercept(action.clone())
+                                }
+                                _ => FilterResult::Forward,
+                            }
+                        };
+                    } else if let KeyState::Pressed = state {
+                        data.super_tap_pending = Some(false);
                     }
-                }
 
-                // If the key is pressed and triggered a action
-                // we will not forward the key to the client.
-                // Additionally add the key to the suppressed keys
-                // so that we can decide on a release if the key
-                // should be forwarded to the client or not.
-                if let KeyState::Pressed = state {
-                    if !inhibited {
-                        let action = process_keyboard_shortcut(&data.keybindings, *modifiers, keysym);
-
-                        if action.is_some() {
+                    // While the launcher overlay is open it grabs the whole keyboard:
+                    // every key is consumed here instead of being forwarded to the
+                    // focused client, whether or not it maps to a launcher action.
+                    if data.launcher.is_visible() && !(modifiers.ctrl && keysym == Keysym::space) {
+                        if let KeyState::Pressed = state {
+                            let action = launcher_key_action(keysym);
                             suppressed_keys.push(keysym);
+                            return FilterResult::Intercept(action);
+                        } else {
+                            suppressed_keys.retain(|k| *k != keysym);
+                            return FilterResult::Intercept(KeyAction::None);
                         }
+                    }
 
-                        action
-                            .map(FilterResult::Intercept)
-                            .unwrap_or(FilterResult::Forward)
+                    // If the key is pressed and triggered a action
+                    // we will not forward the key to the client.
+                    // Additionally add the key to the suppressed keys
+                    // so that we can decide on a release if the key
+                    // should be forwarded to the client or not.
+                    if let KeyState::Pressed = state {
+                        if !inhibited {
+                            let action =
+                                process_keyboard_shortcut(&data.keybindings, *modifiers, keysym);
+
+                            if action.is_some() {
+                                suppressed_keys.push(keysym);
+                            }
+
+                            action
+                                .map(FilterResult::Intercept)
+                                .unwrap_or(FilterResult::Forward)
+                        } else {
+                            FilterResult::Forward
+                        }
                     } else {
-                        FilterResult::Forward
+                        let suppressed = suppressed_keys.contains(&keysym);
+                        if suppressed {
+                            suppressed_keys.retain(|k| *k != keysym);
+                            FilterResult::Intercept(KeyAction::None)
+                        } else {
+                            FilterResult::Forward
+                        }
                     }
-                } else {
-                    let suppressed = suppressed_keys.contains(&keysym);
-                    if suppressed {
-                        suppressed_keys.retain(|k| *k != keysym);
-                        FilterResult::Intercept(KeyAction::None)
-                    } else {
-                        FilterResult::Forward
-                    }
-                }
-            })
+                },
+            )
             .unwrap_or(KeyAction::None);
 
         self.suppressed_keys = suppressed_keys;
@@ -409,8 +434,8 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     .get::<FullscreenSurface>()
                     .and_then(|f| f.get())
                 {
-                    if let Some((_, _)) =
-                        window.surface_under(location - output_geo.loc.to_f64(), WindowSurfaceType::ALL)
+                    if let Some((_, _)) = window
+                        .surface_under(location - output_geo.loc.to_f64(), WindowSurfaceType::ALL)
                     {
                         #[cfg(feature = "xwayland")]
                         if let Some(surface) = window.0.x11_surface() {
@@ -424,7 +449,9 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 let layers = layer_map_for_output(output);
                 if let Some(layer) = layers
                     .layer_under(WlrLayer::Overlay, location - output_geo.loc.to_f64())
-                    .or_else(|| layers.layer_under(WlrLayer::Top, location - output_geo.loc.to_f64()))
+                    .or_else(|| {
+                        layers.layer_under(WlrLayer::Top, location - output_geo.loc.to_f64())
+                    })
                 {
                     if layer.can_receive_keyboard_focus() {
                         if let Some((_, _)) = layer.surface_under(
@@ -440,7 +467,11 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 }
             }
 
-            if let Some((window, _)) = self.space.element_under(location).map(|(w, p)| (w.clone(), p)) {
+            if let Some((window, _)) = self
+                .space
+                .element_under(location)
+                .map(|(w, p)| (w.clone(), p))
+            {
                 self.space.raise_element(&window, true);
                 #[cfg(feature = "xwayland")]
                 if let Some(surface) = window.0.x11_surface() {
@@ -455,7 +486,9 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 let layers = layer_map_for_output(output);
                 if let Some(layer) = layers
                     .layer_under(WlrLayer::Bottom, location - output_geo.loc.to_f64())
-                    .or_else(|| layers.layer_under(WlrLayer::Background, location - output_geo.loc.to_f64()))
+                    .or_else(|| {
+                        layers.layer_under(WlrLayer::Background, location - output_geo.loc.to_f64())
+                    })
                 {
                     if layer.can_receive_keyboard_focus() {
                         if let Some((_, _)) = layer.surface_under(
@@ -540,9 +573,9 @@ impl<BackendData: Backend> AnvilState<BackendData> {
     }
 
     fn on_pointer_axis<B: InputBackend>(&mut self, evt: B::PointerAxisEvent) {
-        let horizontal_amount = evt
-            .amount(input::Axis::Horizontal)
-            .unwrap_or_else(|| evt.amount_v120(input::Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.);
+        let horizontal_amount = evt.amount(input::Axis::Horizontal).unwrap_or_else(|| {
+            evt.amount_v120(input::Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.
+        });
         let vertical_amount = evt
             .amount(input::Axis::Vertical)
             .unwrap_or_else(|| evt.amount_v120(input::Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.);
@@ -552,14 +585,16 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         {
             let mut frame = AxisFrame::new(evt.time()).source(evt.source());
             if horizontal_amount != 0.0 {
-                frame = frame.relative_direction(Axis::Horizontal, evt.relative_direction(Axis::Horizontal));
+                frame = frame
+                    .relative_direction(Axis::Horizontal, evt.relative_direction(Axis::Horizontal));
                 frame = frame.value(Axis::Horizontal, horizontal_amount);
                 if let Some(discrete) = horizontal_amount_discrete {
                     frame = frame.v120(Axis::Horizontal, discrete as i32);
                 }
             }
             if vertical_amount != 0.0 {
-                frame = frame.relative_direction(Axis::Vertical, evt.relative_direction(Axis::Vertical));
+                frame = frame
+                    .relative_direction(Axis::Vertical, evt.relative_direction(Axis::Vertical));
                 frame = frame.value(Axis::Vertical, vertical_amount);
                 if let Some(discrete) = vertical_amount_discrete {
                     frame = frame.v120(Axis::Vertical, discrete as i32);
@@ -702,7 +737,11 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
 #[cfg(any(feature = "winit", feature = "x11"))]
 impl<BackendData: Backend> AnvilState<BackendData> {
-    pub fn process_input_event_windowed<B: InputBackend>(&mut self, event: InputEvent<B>, output_name: &str) {
+    pub fn process_input_event_windowed<B: InputBackend>(
+        &mut self,
+        event: InputEvent<B>,
+        output_name: &str,
+    ) {
         match event {
             InputEvent::Keyboard { event } => match self.keyboard_key_to_action::<B>(event) {
                 KeyAction::ScaleUp => {
@@ -715,7 +754,12 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
                     let current_scale = output.current_scale().fractional_scale();
                     let new_scale = current_scale + 0.25;
-                    output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
+                    output.change_current_state(
+                        None,
+                        None,
+                        Some(Scale::Fractional(new_scale)),
+                        None,
+                    );
 
                     crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
                     crate::shell::tiling::retile_all_outputs(self);
@@ -732,7 +776,12 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
                     let current_scale = output.current_scale().fractional_scale();
                     let new_scale = f64::max(1.0, current_scale - 0.25);
-                    output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
+                    output.change_current_state(
+                        None,
+                        None,
+                        Some(Scale::Fractional(new_scale)),
+                        None,
+                    );
 
                     crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
                     crate::shell::tiling::retile_all_outputs(self);
@@ -857,7 +906,11 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
 #[cfg(feature = "udev")]
 impl AnvilState<UdevData> {
-    pub fn process_input_event<B: InputBackend>(&mut self, dh: &DisplayHandle, event: InputEvent<B>) {
+    pub fn process_input_event<B: InputBackend>(
+        &mut self,
+        dh: &DisplayHandle,
+        event: InputEvent<B>,
+    ) {
         match event {
             InputEvent::Keyboard { event, .. } => match self.keyboard_key_to_action::<B>(event) {
                 #[cfg(feature = "udev")]
@@ -906,11 +959,17 @@ impl AnvilState<UdevData> {
                             output.current_scale().fractional_scale(),
                         );
                         let new_scale = scale + 0.25;
-                        output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
+                        output.change_current_state(
+                            None,
+                            None,
+                            Some(Scale::Fractional(new_scale)),
+                            None,
+                        );
 
                         let rescale = scale / new_scale;
                         let output_location = output_location.to_f64();
-                        let mut pointer_output_location = self.pointer.current_location() - output_location;
+                        let mut pointer_output_location =
+                            self.pointer.current_location() - output_location;
                         pointer_output_location.x *= rescale;
                         pointer_output_location.y *= rescale;
                         let pointer_location = output_location + pointer_output_location;
@@ -946,11 +1005,17 @@ impl AnvilState<UdevData> {
                             output.current_scale().fractional_scale(),
                         );
                         let new_scale = f64::max(1.0, scale - 0.25);
-                        output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
+                        output.change_current_state(
+                            None,
+                            None,
+                            Some(Scale::Fractional(new_scale)),
+                            None,
+                        );
 
                         let rescale = scale / new_scale;
                         let output_location = output_location.to_f64();
-                        let mut pointer_output_location = self.pointer.current_location() - output_location;
+                        let mut pointer_output_location =
+                            self.pointer.current_location() - output_location;
                         pointer_output_location.x *= rescale;
                         pointer_output_location.y *= rescale;
                         let pointer_location = output_location + pointer_output_location;
@@ -993,7 +1058,10 @@ impl AnvilState<UdevData> {
                             Transform::Flipped270 => Transform::Normal,
                         };
                         output.change_current_state(None, Some(new_transform), None, None);
-                        crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
+                        crate::shell::fixup_positions(
+                            &mut self.space,
+                            self.pointer.current_location(),
+                        );
                         crate::shell::tiling::retile_all_outputs(self);
                         self.backend_data.reset_buffers(&output);
                     }
@@ -1029,18 +1097,26 @@ impl AnvilState<UdevData> {
                 },
             },
             InputEvent::PointerMotion { event, .. } => self.on_pointer_move::<B>(dh, event),
-            InputEvent::PointerMotionAbsolute { event, .. } => self.on_pointer_move_absolute::<B>(dh, event),
+            InputEvent::PointerMotionAbsolute { event, .. } => {
+                self.on_pointer_move_absolute::<B>(dh, event)
+            }
             InputEvent::PointerButton { event, .. } => self.on_pointer_button::<B>(event),
             InputEvent::PointerAxis { event, .. } => self.on_pointer_axis::<B>(event),
             InputEvent::TabletToolAxis { event, .. } => self.on_tablet_tool_axis::<B>(event),
-            InputEvent::TabletToolProximity { event, .. } => self.on_tablet_tool_proximity::<B>(dh, event),
+            InputEvent::TabletToolProximity { event, .. } => {
+                self.on_tablet_tool_proximity::<B>(dh, event)
+            }
             InputEvent::TabletToolTip { event, .. } => self.on_tablet_tool_tip::<B>(event),
             InputEvent::TabletToolButton { event, .. } => self.on_tablet_button::<B>(event),
             InputEvent::GestureSwipeBegin { event, .. } => self.on_gesture_swipe_begin::<B>(event),
-            InputEvent::GestureSwipeUpdate { event, .. } => self.on_gesture_swipe_update::<B>(event),
+            InputEvent::GestureSwipeUpdate { event, .. } => {
+                self.on_gesture_swipe_update::<B>(event)
+            }
             InputEvent::GestureSwipeEnd { event, .. } => self.on_gesture_swipe_end::<B>(event),
             InputEvent::GesturePinchBegin { event, .. } => self.on_gesture_pinch_begin::<B>(event),
-            InputEvent::GesturePinchUpdate { event, .. } => self.on_gesture_pinch_update::<B>(event),
+            InputEvent::GesturePinchUpdate { event, .. } => {
+                self.on_gesture_pinch_update::<B>(event)
+            }
             InputEvent::GesturePinchEnd { event, .. } => self.on_gesture_pinch_end::<B>(event),
             InputEvent::GestureHoldBegin { event, .. } => self.on_gesture_hold_begin::<B>(event),
             InputEvent::GestureHoldEnd { event, .. } => self.on_gesture_hold_end::<B>(event),
@@ -1059,7 +1135,11 @@ impl AnvilState<UdevData> {
         }
     }
 
-    fn on_pointer_move<B: InputBackend>(&mut self, _dh: &DisplayHandle, evt: B::PointerMotionEvent) {
+    fn on_pointer_move<B: InputBackend>(
+        &mut self,
+        _dh: &DisplayHandle,
+        evt: B::PointerMotionEvent,
+    ) {
         let mut pointer_location = self.pointer.current_location();
         let serial = SCOUNTER.next_serial();
 
@@ -1076,10 +1156,9 @@ impl AnvilState<UdevData> {
             with_pointer_constraint(&surface, &pointer, |constraint| match constraint {
                 Some(constraint) if constraint.is_active() => {
                     // Constraint does not apply if not within region
-                    if !constraint
-                        .region()
-                        .is_none_or(|x| x.contains((pointer_location - *surface_loc).to_i32_round()))
-                    {
+                    if !constraint.region().is_none_or(|x| {
+                        x.contains((pointer_location - *surface_loc).to_i32_round())
+                    }) {
                         return;
                     }
                     match &*constraint {
@@ -1121,14 +1200,16 @@ impl AnvilState<UdevData> {
                 if let Some(region) = &confine_region {
                     // Clamp delta.x
                     if !region.contains(
-                        (pointer_location + Point::new(delta.x, 0f64) - *surface_loc).to_i32_round(),
+                        (pointer_location + Point::new(delta.x, 0f64) - *surface_loc)
+                            .to_i32_round(),
                     ) {
                         delta.x = 0f64;
                     }
 
                     // Clamp delta.y
                     if !region.contains(
-                        (pointer_location + Point::new(0f64, delta.y) - *surface_loc).to_i32_round(),
+                        (pointer_location + Point::new(0f64, delta.y) - *surface_loc)
+                            .to_i32_round(),
                     ) {
                         delta.y = 0f64;
                     }
@@ -1143,7 +1224,9 @@ impl AnvilState<UdevData> {
         // If confined, don't move pointer if it would go outside surface
         if pointer_confined {
             if let Some((surface, _)) = &under {
-                if new_under.as_ref().and_then(|(under, _)| under.wl_surface()) != surface.wl_surface() {
+                if new_under.as_ref().and_then(|(under, _)| under.wl_surface())
+                    != surface.wl_surface()
+                {
                     pointer.frame(self);
                     return;
                 }
@@ -1169,7 +1252,10 @@ impl AnvilState<UdevData> {
             with_pointer_constraint(&under, &pointer, |constraint| match constraint {
                 Some(constraint) if !constraint.is_active() => {
                     let point = (pointer_location - surface_location).to_i32_round();
-                    if constraint.region().is_none_or(|region| region.contains(point)) {
+                    if constraint
+                        .region()
+                        .is_none_or(|region| region.contains(point))
+                    {
                         constraint.activate();
                     }
                 }
@@ -1185,10 +1271,9 @@ impl AnvilState<UdevData> {
     ) {
         let serial = SCOUNTER.next_serial();
 
-        let max_x = self
-            .space
-            .outputs()
-            .fold(0, |acc, o| acc + self.space.output_geometry(o).unwrap().size.w);
+        let max_x = self.space.outputs().fold(0, |acc, o| {
+            acc + self.space.output_geometry(o).unwrap().size.w
+        });
 
         let max_h_output = self
             .space
@@ -1508,10 +1593,9 @@ impl AnvilState<UdevData> {
         const EDGE_EPSILON: f64 = 0.01;
 
         let (pos_x, pos_y) = pos.into();
-        let max_x = self
-            .space
-            .outputs()
-            .fold(0, |acc, o| acc + self.space.output_geometry(o).unwrap().size.w);
+        let max_x = self.space.outputs().fold(0, |acc, o| {
+            acc + self.space.output_geometry(o).unwrap().size.w
+        });
         let clamped_x = pos_x.clamp(0.0, max_x as f64 - EDGE_EPSILON);
         let max_y = self
             .space
@@ -1619,7 +1703,12 @@ fn current_output_for_workspace_nav<BackendData: Backend>(
 /// Turns a config action name (see `config::known_actions`) into the
 /// `KeyAction` it triggers. Kept in sync with `config::known_actions` and
 /// `config::default_shortcuts` by the test at the bottom of `config.rs`.
-fn action_for_name(name: &str, terminal: &str, browser: &str, file_manager: &str) -> Option<KeyAction> {
+fn action_for_name(
+    name: &str,
+    terminal: &str,
+    browser: &str,
+    file_manager: &str,
+) -> Option<KeyAction> {
     use crate::shell::tiling::Direction;
 
     Some(match name {
@@ -1657,8 +1746,8 @@ fn action_for_name(name: &str, terminal: &str, browser: &str, file_manager: &str
 }
 
 /// Resolves every keybinding from `config` into the table
-/// `keyboard_key_to_action` consults on each key press. Called once at
-/// startup (config changes need a restart to take effect).
+/// `keyboard_key_to_action` consults on each key press. Rebuilt whenever the
+/// config changes so bindings and their associated commands update live.
 pub(crate) fn compile_keybindings(
     config: &crate::config::Config,
 ) -> Vec<(crate::config::KeyModifiers, Keysym, KeyAction)> {
@@ -1666,13 +1755,21 @@ pub(crate) fn compile_keybindings(
         .parsed_keybindings()
         .into_iter()
         .filter_map(|binding| {
-            match action_for_name(&binding.action, &config.terminal, &config.browser, &config.file_manager) {
+            match action_for_name(
+                &binding.action,
+                &config.terminal,
+                &config.browser,
+                &config.file_manager,
+            ) {
                 Some(action) => Some((binding.modifiers, binding.keysym, action)),
                 None => {
                     // `parsed_keybindings` already validated the name against
                     // `known_actions`, so this would mean the two tables
                     // drifted apart - a bug here, not a bad config file.
-                    error!(action = binding.action, "No KeyAction for a known config action name");
+                    error!(
+                        action = binding.action,
+                        "No KeyAction for a known config action name"
+                    );
                     None
                 }
             }
@@ -1685,10 +1782,18 @@ pub(crate) fn compile_keybindings(
 /// Called once at startup alongside `compile_keybindings`.
 pub(crate) fn compile_super_tap_action(config: &crate::config::Config) -> Option<KeyAction> {
     let action_name = config.super_tap_action()?;
-    match action_for_name(action_name, &config.terminal, &config.browser, &config.file_manager) {
+    match action_for_name(
+        action_name,
+        &config.terminal,
+        &config.browser,
+        &config.file_manager,
+    ) {
         Some(action) => Some(action),
         None => {
-            error!(action = action_name, "No KeyAction for a known config action name");
+            error!(
+                action = action_name,
+                "No KeyAction for a known config action name"
+            );
             None
         }
     }
@@ -1724,7 +1829,9 @@ fn process_keyboard_shortcut(
     process_dynamic_shortcut(modifiers, keysym).or_else(|| {
         keybindings
             .iter()
-            .find(|(binding_mods, binding_sym, _)| *binding_sym == keysym && binding_mods.matches(&modifiers))
+            .find(|(binding_mods, binding_sym, _)| {
+                *binding_sym == keysym && binding_mods.matches(&modifiers)
+            })
             .map(|(_, _, action)| action.clone())
     })
 }
