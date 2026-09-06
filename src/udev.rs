@@ -963,13 +963,26 @@ impl AnvilState<UdevData> {
                 );
             }
         } else {
-            let mode_id = connector
+            let preferred_mode_id = connector
                 .modes()
                 .iter()
                 .position(|mode| mode.mode_type().contains(ModeTypeFlags::PREFERRED))
                 .unwrap_or(0);
 
-            let drm_mode = connector.modes()[mode_id];
+            let preferred_mode = connector.modes()[preferred_mode_id];
+            let output_settings = self.config.output_settings(&output_name);
+            let drm_mode = output_settings
+                .refresh_rate
+                .filter(|refresh| *refresh > 0)
+                .and_then(|requested| {
+                    connector
+                        .modes()
+                        .iter()
+                        .filter(|mode| mode.size() == preferred_mode.size())
+                        .min_by_key(|mode| (WlMode::from(**mode).refresh - requested).abs())
+                        .copied()
+                })
+                .unwrap_or(preferred_mode);
             let wl_mode = WlMode::from(drm_mode);
 
             let (phys_w, phys_h) = connector.size().unwrap_or((0, 0));
@@ -983,16 +996,24 @@ impl AnvilState<UdevData> {
                     serial_number,
                 },
             );
+            for mode in connector.modes() {
+                output.add_mode(WlMode::from(*mode));
+            }
             let global = output.create_global::<AnvilState<UdevData>>(&self.display_handle);
 
-            let output_settings = self.config.output_settings(&output.name());
             let placed: Vec<(String, Rectangle<i32, Logical>)> = self
                 .space
                 .outputs()
                 .map(|o| (o.name(), self.space.output_geometry(o).unwrap()))
                 .collect();
-            let logical_size: Size<i32, Logical> = (drm_mode.size().0 as i32, drm_mode.size().1 as i32).into();
-            let position = crate::config::resolve_output_position(&output_settings, &output.name(), logical_size, &placed);
+            let logical_size: Size<i32, Logical> =
+                (drm_mode.size().0 as i32, drm_mode.size().1 as i32).into();
+            let position = crate::config::resolve_output_position(
+                &output_settings,
+                &output.name(),
+                logical_size,
+                &placed,
+            );
 
             output.set_preferred(wl_mode);
             output.change_current_state(Some(wl_mode), None, None, Some(position));

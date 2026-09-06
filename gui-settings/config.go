@@ -79,9 +79,10 @@ type OutputPosition struct {
 // OutputSettings mirrors `config::OutputSettings` in the compositor, keyed
 // by connector name (e.g. "eDP-1", "HDMI-A-1") in Config.Outputs.
 type OutputSettings struct {
-	Primary  bool            `toml:"primary,omitempty"`
-	MirrorOf string          `toml:"mirror_of,omitempty"`
-	Position *OutputPosition `toml:"position,omitempty"`
+	Primary     bool            `toml:"primary,omitempty"`
+	RefreshRate int             `toml:"refresh_rate,omitempty"`
+	MirrorOf    string          `toml:"mirror_of,omitempty"`
+	Position    *OutputPosition `toml:"position,omitempty"`
 }
 
 // knownActions lists every action the compositor recognizes in

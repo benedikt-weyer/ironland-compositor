@@ -25,8 +25,9 @@ in
       partial table is fine — and
       per-monitor settings under `outputs.<connector-name>` (e.g.
       `outputs."eDP-1"`, `outputs."HDMI-A-1"`): `primary` marks the main
-      monitor, `mirror_of` duplicates another output's position onto this
-      one, and `position` places this output relative to another
+      monitor, `refresh_rate` selects its refresh rate in millihertz,
+      `mirror_of` duplicates another output's position onto this one, and
+      `position` places this output relative to another
       (`right_of`/`left_of`/`above`/`below`, each an output name) or at an
       absolute `{ x, y }`. An output not listed here is auto-placed to the
       right of the others, matching the compositor's previous behavior. And

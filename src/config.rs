@@ -91,6 +91,9 @@ pub struct OutputSettings {
     /// Marks this the primary monitor. At most one output should set this;
     /// if several do, which one wins is unspecified.
     pub primary: bool,
+    /// Requested vertical refresh rate in millihertz. The compositor picks
+    /// the closest advertised rate at the monitor's preferred resolution.
+    pub refresh_rate: Option<i32>,
     /// Name of another output to duplicate ("mirror"/"clone" this one onto),
     /// by placing this output at that output's position. Takes priority over
     /// `position`.
@@ -739,6 +742,13 @@ mod tests {
         assert_eq!(raw.workspaces.count, 4);
         assert!(!raw.workspaces.dynamic);
         assert!(raw.workspaces.overlay);
+    }
+
+    #[test]
+    fn output_refresh_rate_parses_in_millihertz() {
+        let raw: RawConfig =
+            toml::from_str("[outputs.DP-1]\nrefresh_rate = 144000\n").unwrap();
+        assert_eq!(raw.outputs["DP-1"].refresh_rate, Some(144_000));
     }
 
     #[test]

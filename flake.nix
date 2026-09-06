@@ -99,7 +99,7 @@
           # (see gui-settings/appearance.go) rather than linking against
           # glib, so it just needs the binary on PATH.
           postFixup = ''
-            wrapProgram $out/bin/gui-settings --prefix PATH : ${pkgs.glib}/bin
+            wrapProgram $out/bin/gui-settings --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.glib pkgs.wayland-utils ]}
           '';
         };
 

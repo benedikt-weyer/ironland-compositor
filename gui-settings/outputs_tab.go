@@ -7,7 +7,6 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
@@ -69,8 +68,18 @@ func buildOutputsTab(cfg *Config, w fyne.Window) fyne.CanvasObject {
 	holder := container.NewVBox()
 	resetPage := widget.NewButtonWithIcon("Reset page", theme.ViewRefreshIcon(), nil)
 	resetPage.Hide()
+	detectionStatus := widget.NewLabel("Detecting connected monitors…")
+	detectionStatus.Wrapping = fyne.TextWrapWord
+	detected := map[string]DetectedOutput{}
 
 	var rebuild func()
+	refreshPageReset := func() {
+		if len(cfg.Outputs) == 0 {
+			resetPage.Hide()
+		} else {
+			resetPage.Show()
+		}
+	}
 	resetPage.OnTapped = func() {
 		cfg.Outputs = map[string]OutputSettings{}
 		rebuild()
@@ -78,14 +87,38 @@ func buildOutputsTab(cfg *Config, w fyne.Window) fyne.CanvasObject {
 	rebuild = func() {
 		holder.RemoveAll()
 
-		names := make([]string, 0, len(cfg.Outputs))
+		names := make([]string, 0, len(cfg.Outputs)+len(detected))
+		seen := map[string]bool{}
 		for name := range cfg.Outputs {
 			names = append(names, name)
+			seen[name] = true
+		}
+		for name := range detected {
+			if !seen[name] {
+				names = append(names, name)
+			}
 		}
 		sort.Strings(names)
 
+		if len(detected) > 0 {
+			outputs := make([]DetectedOutput, 0, len(detected))
+			for _, output := range detected {
+				outputs = append(outputs, output)
+			}
+			sort.Slice(outputs, func(i, j int) bool { return outputs[i].Name < outputs[j].Name })
+			holder.Add(widget.NewLabelWithStyle("Display arrangement", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+			holder.Add(newMonitorDiagram(outputs, cfg, rebuild))
+			holder.Add(widget.NewLabel("Drag displays to arrange them. Edges and corners snap together; dropping a display stores an exact logical position."))
+			holder.Add(widget.NewSeparator())
+		}
+
 		for _, name := range names {
-			holder.Add(buildOutputCard(cfg, name, rebuild))
+			var output *DetectedOutput
+			if value, ok := detected[name]; ok {
+				copy := value
+				output = &copy
+			}
+			holder.Add(buildOutputCard(cfg, name, output, rebuild, refreshPageReset))
 		}
 
 		addName := widget.NewEntry()
@@ -103,42 +136,78 @@ func buildOutputsTab(cfg *Config, w fyne.Window) fyne.CanvasObject {
 			rebuild()
 		})
 		holder.Add(container.NewBorder(nil, nil, nil, addButton, addName))
-		if len(cfg.Outputs) == 0 {
-			resetPage.Hide()
-		} else {
-			resetPage.Show()
-		}
-
+		refreshPageReset()
 		holder.Refresh()
 	}
 	rebuild()
 
-	hint := widget.NewLabel("Connector names come from the compositor's logs on connect (e.g. \"Trying to setup connector eDP-1\"), or from `wlr-randr`/`kanshi` output names. Each monitor not listed here is auto-placed to the right of the others.")
+	detectButton := widget.NewButtonWithIcon("Detect monitors", theme.ViewRefreshIcon(), nil)
+	var runDetection func()
+	runDetection = func() {
+		detectButton.Disable()
+		detectionStatus.SetText("Detecting connected monitors…")
+		go func() {
+			outputs, err := detectOutputs()
+			fyne.Do(func() {
+				detectButton.Enable()
+				if err != nil {
+					detectionStatus.SetText("Automatic detection unavailable: " + err.Error() + ". You can still add a connector manually.")
+					return
+				}
+				detected = make(map[string]DetectedOutput, len(outputs))
+				for _, output := range outputs {
+					detected[output.Name] = output
+				}
+				detectionStatus.SetText(strconv.Itoa(len(outputs)) + " connected monitor(s) detected.")
+				rebuild()
+			})
+		}()
+	}
+	detectButton.OnTapped = runDetection
+	runDetection()
+
+	hint := widget.NewLabel("Connected monitors are detected through the compositor's Wayland output information. Each monitor without a saved position is auto-placed to the right of the others.")
 	hint.Wrapping = fyne.TextWrapWord
 
-	header := container.NewHBox(layout.NewSpacer(), resetPage)
+	header := container.NewBorder(nil, nil, detectionStatus, container.NewHBox(detectButton, resetPage))
 	body := container.NewVBox(holder, hint)
 	return container.NewBorder(header, nil, nil, nil, container.NewScroll(body))
 }
 
-func buildOutputCard(cfg *Config, name string, rebuild func()) fyne.CanvasObject {
+func buildOutputCard(cfg *Config, name string, detected *DetectedOutput, rebuild, changed func()) fyne.CanvasObject {
 	settings := cfg.Outputs[name]
 
-	title := widget.NewLabelWithStyle(name, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	titleText := name
+	if detected != nil {
+		titleText = monitorDescription(*detected)
+	}
+	title := widget.NewLabelWithStyle(titleText, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
 	removeButton := widget.NewButtonWithIcon("Reset monitor", theme.ViewRefreshIcon(), func() {
 		delete(cfg.Outputs, name)
 		rebuild()
 	})
+	refreshMonitorReset := func() {
+		if _, configured := cfg.Outputs[name]; configured {
+			removeButton.Show()
+		} else {
+			removeButton.Hide()
+		}
+		changed()
+	}
+	refreshMonitorReset()
 
 	primaryReset := widget.NewButtonWithIcon("Reset", theme.ViewRefreshIcon(), nil)
 	var refreshPrimaryReset func()
-	primary := widget.NewCheck("Primary monitor", func(checked bool) {
+	primary := widget.NewCheck("Primary monitor", nil)
+	primary.SetChecked(settings.Primary)
+	primary.OnChanged = func(checked bool) {
 		s := cfg.Outputs[name]
 		s.Primary = checked
-		cfg.Outputs[name] = s
+		storeOutputSettings(cfg, name, s)
 		refreshPrimaryReset()
-	})
+		refreshMonitorReset()
+	}
 	refreshPrimaryReset = func() {
 		if cfg.Outputs[name].Primary {
 			primaryReset.Show()
@@ -147,8 +216,45 @@ func buildOutputCard(cfg *Config, name string, rebuild func()) fyne.CanvasObject
 		}
 	}
 	primaryReset.OnTapped = func() { primary.SetChecked(false) }
-	primary.SetChecked(settings.Primary)
 	refreshPrimaryReset()
+
+	refreshReset := widget.NewButtonWithIcon("Reset", theme.ViewRefreshIcon(), nil)
+	refreshOptions := []string{"Automatic"}
+	refreshValues := map[string]int{"Automatic": 0}
+	if detected != nil {
+		for _, rate := range detected.RefreshRates {
+			label := formatRefreshRate(rate)
+			refreshOptions = append(refreshOptions, label)
+			refreshValues[label] = rate
+		}
+	}
+	refreshSelect := widget.NewSelect(refreshOptions, nil)
+	selectedRefresh := "Automatic"
+	if settings.RefreshRate != 0 {
+		selectedRefresh = formatRefreshRate(settings.RefreshRate)
+		if _, ok := refreshValues[selectedRefresh]; !ok {
+			refreshOptions = append(refreshOptions, selectedRefresh)
+			refreshSelect.Options = refreshOptions
+			refreshValues[selectedRefresh] = settings.RefreshRate
+		}
+	}
+	refreshSelect.SetSelected(selectedRefresh)
+	refreshRefreshReset := func() {
+		if cfg.Outputs[name].RefreshRate == 0 {
+			refreshReset.Hide()
+		} else {
+			refreshReset.Show()
+		}
+	}
+	refreshSelect.OnChanged = func(selected string) {
+		s := cfg.Outputs[name]
+		s.RefreshRate = refreshValues[selected]
+		storeOutputSettings(cfg, name, s)
+		refreshRefreshReset()
+		refreshMonitorReset()
+	}
+	refreshReset.OnTapped = func() { refreshSelect.SetSelected("Automatic") }
+	refreshRefreshReset()
 
 	targetEntry := widget.NewEntry()
 	targetEntry.SetPlaceHolder("other monitor's connector name")
@@ -202,14 +308,10 @@ func buildOutputCard(cfg *Config, name string, rebuild func()) fyne.CanvasObject
 			positionReset.Show()
 		}
 	}
-	mode.OnChanged = func(selected string) {
-		s := cfg.Outputs[name]
-		cfg.Outputs[name] = applyModeField(s, positionMode(selected), targetEntry.Text, xEntry.Text, yEntry.Text)
-
+	setExtraRows := func(selected string) {
 		extraRows.RemoveAll()
 		switch positionMode(selected) {
 		case modeAuto:
-			// Nothing more to configure.
 		case modeRightOf, modeLeftOf, modeAbove, modeBelow:
 			extraRows.Add(targetRow)
 		case modeAbsolute:
@@ -218,24 +320,34 @@ func buildOutputCard(cfg *Config, name string, rebuild func()) fyne.CanvasObject
 			extraRows.Add(mirrorRow)
 		}
 		extraRows.Refresh()
-		refreshPositionReset()
 	}
 	mode.SetSelected(string(modeOf(settings)))
+	setExtraRows(mode.Selected)
+	mode.OnChanged = func(selected string) {
+		s := cfg.Outputs[name]
+		storeOutputSettings(cfg, name, applyModeField(s, positionMode(selected), targetEntry.Text, xEntry.Text, yEntry.Text))
+		setExtraRows(selected)
+		refreshPositionReset()
+		refreshMonitorReset()
+	}
 
 	targetEntry.OnChanged = func(text string) {
 		s := cfg.Outputs[name]
-		cfg.Outputs[name] = applyModeField(s, positionMode(mode.Selected), text, xEntry.Text, yEntry.Text)
+		storeOutputSettings(cfg, name, applyModeField(s, positionMode(mode.Selected), text, xEntry.Text, yEntry.Text))
 		refreshPositionReset()
+		refreshMonitorReset()
 	}
 	xEntry.OnChanged = func(text string) {
 		s := cfg.Outputs[name]
-		cfg.Outputs[name] = applyModeField(s, positionMode(mode.Selected), targetEntry.Text, text, yEntry.Text)
+		storeOutputSettings(cfg, name, applyModeField(s, positionMode(mode.Selected), targetEntry.Text, text, yEntry.Text))
 		refreshPositionReset()
+		refreshMonitorReset()
 	}
 	yEntry.OnChanged = func(text string) {
 		s := cfg.Outputs[name]
-		cfg.Outputs[name] = applyModeField(s, positionMode(mode.Selected), targetEntry.Text, xEntry.Text, text)
+		storeOutputSettings(cfg, name, applyModeField(s, positionMode(mode.Selected), targetEntry.Text, xEntry.Text, text))
 		refreshPositionReset()
+		refreshMonitorReset()
 	}
 	positionReset.OnTapped = func() {
 		targetEntry.SetText("")
@@ -248,10 +360,19 @@ func buildOutputCard(cfg *Config, name string, rebuild func()) fyne.CanvasObject
 
 	header := container.NewBorder(nil, nil, title, removeButton)
 	primaryRow := container.NewBorder(nil, nil, nil, primaryReset, primary)
+	refreshRow := container.NewBorder(nil, nil, widget.NewLabel("Refresh rate:"), refreshReset, refreshSelect)
 	positionRow := container.NewBorder(nil, nil, nil, positionReset, mode)
-	body := container.NewVBox(primaryRow, positionRow, extraRows)
+	body := container.NewVBox(primaryRow, refreshRow, positionRow, extraRows)
 
 	return container.NewVBox(header, body, widget.NewSeparator())
+}
+
+func storeOutputSettings(cfg *Config, name string, settings OutputSettings) {
+	if settings == (OutputSettings{}) {
+		delete(cfg.Outputs, name)
+		return
+	}
+	cfg.Outputs[name] = settings
 }
 
 // applyModeField rewrites s' MirrorOf/Position from the selector's current

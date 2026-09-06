@@ -28,6 +28,7 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 	cfg.TopBar = true
 	cfg.Appearance.DarkMode = true
 	cfg.Shortcuts["quit"] = []string{"ctrl+alt+q"}
+	cfg.Outputs["DP-1"] = OutputSettings{RefreshRate: 144_000}
 
 	path, err := saveConfig(cfg)
 	if err != nil {
@@ -61,6 +62,9 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 	}
 	if !reflect.DeepEqual(loaded.Shortcuts["quit"], []string{"ctrl+alt+q"}) {
 		t.Fatalf("loadConfig shortcuts[quit] = %v", loaded.Shortcuts["quit"])
+	}
+	if loaded.Outputs["DP-1"].RefreshRate != 144_000 {
+		t.Fatalf("loadConfig outputs[DP-1].refreshRate = %d", loaded.Outputs["DP-1"].RefreshRate)
 	}
 	// An action untouched by the override should keep its built-in default.
 	if !reflect.DeepEqual(loaded.Shortcuts["toggle_launcher"], []string{"super"}) {
