@@ -50,7 +50,11 @@ type Config struct {
 	// TopBar controls whether windows may get a compositor-drawn header
 	// bar for server-side decoration. Off by default: a client's request
 	// for server-side decoration is overridden back to client-side.
-	TopBar     bool                      `toml:"top_bar"`
+	TopBar bool `toml:"top_bar"`
+	// Wallpaper is a path to an image file (PNG/JPEG/WebP) used as the
+	// desktop background, scaled and center-cropped to cover each output.
+	// Empty uses the compositor's built-in default wallpaper.
+	Wallpaper  string                    `toml:"wallpaper,omitempty"`
 	Appearance AppearanceSettings        `toml:"appearance"`
 	Shortcuts  map[string][]string       `toml:"shortcuts"`
 	Outputs    map[string]OutputSettings `toml:"outputs"`
@@ -262,6 +266,7 @@ func loadConfig() (Config, string) {
 			cfg.Terminal = raw.Terminal
 		}
 		cfg.TopBar = raw.TopBar
+		cfg.Wallpaper = raw.Wallpaper
 		cfg.Appearance = raw.Appearance
 		cfg.Keyboard = raw.Keyboard
 		for action, keys := range raw.Shortcuts {

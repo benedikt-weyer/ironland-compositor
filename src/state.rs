@@ -189,6 +189,7 @@ pub struct AnvilState<BackendData: Backend + 'static> {
 
     pub show_window_preview: bool,
     pub launcher: crate::drawing::LauncherState,
+    pub wallpaper: crate::wallpaper::Wallpaper,
 
     /// When the workspace dot overlay was last triggered (a switch or a
     /// window move between workspaces), if `config.workspaces.overlay` is
@@ -836,6 +837,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             renderdoc: renderdoc::RenderDoc::new().ok(),
             show_window_preview: false,
             launcher: crate::drawing::LauncherState::default(),
+            wallpaper: crate::wallpaper::Wallpaper::load(config.wallpaper.as_deref()),
             workspace_overlay_shown: None,
             keybindings,
             super_tap_action,

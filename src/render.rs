@@ -146,6 +146,7 @@ pub fn output_elements<R>(
     output: &Output,
     space: &Space<WindowElement>,
     custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
+    background_element: Option<CustomRenderElements<R>>,
     renderer: &mut R,
     show_window_preview: bool,
 ) -> (Vec<OutputRenderElements<R, WindowRenderElement<R>>>, Color32F)
@@ -191,6 +192,13 @@ where
         .expect("output without mode?");
         output_render_elements.extend(space_elements.into_iter().map(OutputRenderElements::Space));
 
+        // The wallpaper sits behind every window, so it's appended last:
+        // damage-tracked render elements are painted front-to-back, in list
+        // order.
+        if let Some(background_element) = background_element {
+            output_render_elements.push(OutputRenderElements::from(background_element));
+        }
+
         (output_render_elements, CLEAR_COLOR)
     }
 }
@@ -200,6 +208,7 @@ pub fn render_output<'a, 'd, R>(
     output: &'a Output,
     space: &'a Space<WindowElement>,
     custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
+    background_element: Option<CustomRenderElements<R>>,
     renderer: &'a mut R,
     framebuffer: &'a mut R::Framebuffer<'_>,
     damage_tracker: &'d mut OutputDamageTracker,
@@ -210,7 +219,13 @@ where
     R: Renderer + ImportAll + ImportMem,
     R::TextureId: Clone + 'static,
 {
-    let (elements, clear_color) =
-        output_elements(output, space, custom_elements, renderer, show_window_preview);
+    let (elements, clear_color) = output_elements(
+        output,
+        space,
+        custom_elements,
+        background_element,
+        renderer,
+        show_window_preview,
+    );
     damage_tracker.render_output(renderer, framebuffer, age, &elements, clear_color)
 }

@@ -22,6 +22,7 @@ pub mod shell;
 pub mod state;
 #[cfg(feature = "udev")]
 pub mod udev;
+pub mod wallpaper;
 #[cfg(feature = "winit")]
 pub mod winit;
 #[cfg(feature = "x11")]

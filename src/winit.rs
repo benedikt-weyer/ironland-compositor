@@ -267,6 +267,8 @@ pub fn run_winit() {
             fps_element.update_fps(fps);
 
             let scale = Scale::from(output.current_scale().fractional_scale());
+            let output_size = state.space.output_geometry(&output).unwrap().size;
+            let wallpaper_buffer = state.wallpaper.buffer_for(output_size).clone();
             let launcher_buffer = state.launcher.ensure_buffer().cloned();
             let launcher_location = launcher_buffer.as_ref().map(|_| {
                 let output_size = state.space.output_geometry(&output).unwrap().size;
@@ -380,6 +382,18 @@ pub fn run_winit() {
                 #[cfg(feature = "debug")]
                 elements.push(CustomRenderElements::Fps(fps_element.clone()));
 
+                let background_element = MemoryRenderBufferRenderElement::from_buffer(
+                    renderer,
+                    Point::from((0.0, 0.0)),
+                    &wallpaper_buffer,
+                    None,
+                    None,
+                    None,
+                    Kind::Unspecified,
+                )
+                .ok()
+                .map(CustomRenderElements::Overlay);
+
                 if let (Some(launcher_buffer), Some(location)) = (&launcher_buffer, launcher_location) {
                     if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
                         renderer,
@@ -412,6 +426,7 @@ pub fn run_winit() {
                     &output,
                     space,
                     elements,
+                    background_element,
                     renderer,
                     &mut fb,
                     damage_tracker,

@@ -15,6 +15,7 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -170,14 +171,41 @@ func buildAppearanceTab(cfg *Config, w fyne.Window) fyne.CanvasObject {
 	})
 	darkMode.SetChecked(cfg.Appearance.DarkMode)
 
-	hint := widget.NewLabel(
+	colorHint := widget.NewLabel(
 		"Applies immediately (and is also saved to config.toml so this toggle remembers its state)." +
 			" This sets the same GNOME setting that xdg-desktop-portal-gtk exposes as the org.freedesktop.appearance color scheme," +
 			" so portal-aware apps pick it up too; it has no effect without xdg-desktop-portal-gtk (or gsettings) installed.",
 	)
-	hint.Wrapping = fyne.TextWrapWord
+	colorHint.Wrapping = fyne.TextWrapWord
 
-	return container.NewVBox(darkMode, hint)
+	wallpaper := widget.NewEntry()
+	wallpaper.SetText(cfg.Wallpaper)
+	wallpaper.SetPlaceHolder("empty = built-in default wallpaper")
+	wallpaper.OnChanged = func(s string) { cfg.Wallpaper = s }
+
+	browseButton := widget.NewButton("Browse…", func() {
+		picker := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+			if err != nil || reader == nil {
+				return
+			}
+			defer reader.Close()
+			path := reader.URI().Path()
+			wallpaper.SetText(path)
+			cfg.Wallpaper = path
+		}, w)
+		picker.SetFilter(storage.NewExtensionFileFilter([]string{".png", ".jpg", ".jpeg", ".webp"}))
+		picker.Show()
+	})
+
+	wallpaperHint := widget.NewLabel(
+		"Path to an image file (PNG/JPEG/WebP) used as the desktop background, scaled and center-cropped to" +
+			" cover each output. Needs a compositor restart to take effect.",
+	)
+	wallpaperHint.Wrapping = fyne.TextWrapWord
+
+	wallpaperForm := widget.NewForm(widget.NewFormItem("Wallpaper", container.NewBorder(nil, nil, nil, browseButton, wallpaper)))
+
+	return container.NewVBox(darkMode, colorHint, widget.NewSeparator(), wallpaperForm, wallpaperHint)
 }
 
 // buildWorkspacesTab lays out the virtual-desktop settings: split-per-monitor

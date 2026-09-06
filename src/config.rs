@@ -207,6 +207,7 @@ struct RawConfig {
     browser: Option<String>,
     file_manager: Option<String>,
     top_bar: bool,
+    wallpaper: Option<String>,
     shortcuts: HashMap<String, Vec<String>>,
     outputs: HashMap<String, OutputSettings>,
     workspaces: WorkspaceSettings,
@@ -226,6 +227,11 @@ pub struct Config {
     /// [`crate::state::AnvilState`]'s `XdgDecorationHandler` impl), so no
     /// header bar is drawn regardless of what individual clients ask for.
     pub top_bar: bool,
+    /// Path to an image file (PNG/JPEG/WebP) to use as the desktop
+    /// background, scaled and center-cropped to cover each output. `None`
+    /// (the default, and also the fallback if the path fails to load) uses
+    /// the compositor's built-in default wallpaper.
+    pub wallpaper: Option<String>,
     /// action name -> key combos, e.g. `"toggle_launcher" -> ["ctrl+space"]`.
     /// Always fully populated: entries not overridden by the config file
     /// keep their built-in default.
@@ -246,6 +252,7 @@ impl Default for Config {
             browser: default_browser(),
             file_manager: default_file_manager(),
             top_bar: false,
+            wallpaper: None,
             shortcuts: default_shortcuts(),
             outputs: HashMap::new(),
             workspaces: WorkspaceSettings::default(),
@@ -402,6 +409,7 @@ impl Config {
                 browser: raw.browser.unwrap_or_else(default_browser),
                 file_manager: raw.file_manager.unwrap_or_else(default_file_manager),
                 top_bar: raw.top_bar,
+                wallpaper: raw.wallpaper,
                 shortcuts,
                 outputs: raw.outputs,
                 workspaces: raw.workspaces,
@@ -605,6 +613,7 @@ mod tests {
             browser: None,
             file_manager: None,
             top_bar: false,
+            wallpaper: None,
             shortcuts,
             outputs: HashMap::new(),
             workspaces: WorkspaceSettings::default(),
@@ -642,6 +651,15 @@ mod tests {
 
         let raw: RawConfig = toml::from_str("top_bar = true").unwrap();
         assert!(raw.top_bar);
+    }
+
+    #[test]
+    fn wallpaper_defaults_to_none_but_can_be_set() {
+        let raw: RawConfig = toml::from_str("").unwrap();
+        assert_eq!(raw.wallpaper, None);
+
+        let raw: RawConfig = toml::from_str(r#"wallpaper = "/home/user/wallpaper.png""#).unwrap();
+        assert_eq!(raw.wallpaper.as_deref(), Some("/home/user/wallpaper.png"));
     }
 
     #[test]

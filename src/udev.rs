@@ -1548,6 +1548,7 @@ impl AnvilState<UdevData> {
             self.show_window_preview,
             &mut self.launcher,
             workspace_overlay_shown.is_some(),
+            &mut self.wallpaper,
         );
         let reschedule = match result {
             Ok((has_rendered, states)) => {
@@ -1631,6 +1632,7 @@ fn render_surface<'a>(
     show_window_preview: bool,
     launcher: &mut LauncherState,
     show_workspace_overlay: bool,
+    wallpaper: &mut crate::wallpaper::Wallpaper,
 ) -> Result<(bool, RenderElementStates), SwapBuffersError> {
     let output_geometry = space.output_geometry(output).unwrap();
     let scale = Scale::from(output.current_scale().fractional_scale());
@@ -1751,8 +1753,27 @@ fn render_surface<'a>(
         }
     }
 
-    let (elements, clear_color) =
-        output_elements(output, space, custom_elements, renderer, show_window_preview);
+    let wallpaper_buffer = wallpaper.buffer_for(output_geometry.size);
+    let background_element = MemoryRenderBufferRenderElement::from_buffer(
+        renderer,
+        Point::from((0.0, 0.0)),
+        wallpaper_buffer,
+        None,
+        None,
+        None,
+        Kind::Unspecified,
+    )
+    .ok()
+    .map(CustomRenderElements::Overlay);
+
+    let (elements, clear_color) = output_elements(
+        output,
+        space,
+        custom_elements,
+        background_element,
+        renderer,
+        show_window_preview,
+    );
 
     let frame_mode = if surface.disable_direct_scanout {
         FrameFlags::empty()
