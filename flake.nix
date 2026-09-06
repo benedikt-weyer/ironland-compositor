@@ -160,11 +160,11 @@
             };
             security.sudo.wheelNeedsPassword = false;
 
-            # caelestia-shell's power menu asks logind for PowerOff/Reboot over
-            # D-Bus (org.freedesktop.login1.Manager); without polkit running
-            # to authorize that action logind just refuses the call, so the
-            # buttons silently do nothing. Polkit's own default rules already
-            # grant power-off/reboot/suspend to the active local session, so
+            # A shell's power menu (or any other D-Bus client) asking logind
+            # for PowerOff/Reboot (org.freedesktop.login1.Manager) gets
+            # silently refused without polkit running to authorize that
+            # action. Polkit's own default rules already grant
+            # power-off/reboot/suspend to the active local session, so
             # enabling it is enough — no extra rule needed.
             security.polkit.enable = true;
 
@@ -185,12 +185,22 @@
               compositor_pid=$!
 
               # The compositor doesn't run an autostart list itself, so bring
-              # up the caelestia (quickshell) shell from here once its socket
-              # exists. Polling the runtime dir for it is simpler than
-              # scraping stdout for the "Listening on wayland socket" log line.
+              # up molunga-shell (the Quickshell config built for this
+              # compositor - see ../molunga-shell, a sibling repo with its
+              # own flake) from here once its socket exists. Polling the
+              # runtime dir for it is simpler than scraping stdout for the
+              # "Listening on wayland socket" log line.
               # (`top_bar` in the compositor's own config is a different
               # thing now: it's the compositor's own window header bar, not
               # this shell, so it doesn't gate this.)
+              #
+              # molunga-shell isn't pulled in as a flake input here: it's a
+              # sibling checkout, not a published one, and a relative `path:`
+              # input escaping this repo's tree only resolves under
+              # `--impure`. Whoever assembles the NixOS config this module
+              # feeds into is expected to put molunga-shell's own flake
+              # package on `PATH` (e.g. via an overlay, or by adding it to
+              # `environment.systemPackages` alongside this module).
               runtime_dir="''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
               socket=""
               for _ in $(seq 1 100); do
@@ -199,8 +209,8 @@
                 sleep 0.1
               done
 
-              if [ -n "$socket" ]; then
-                WAYLAND_DISPLAY=$(basename "$socket") ${pkgs.caelestia-shell}/bin/caelestia-shell &
+              if [ -n "$socket" ] && command -v molunga-shell >/dev/null; then
+                WAYLAND_DISPLAY=$(basename "$socket") molunga-shell &
               fi
 
               wait "$compositor_pid"
@@ -228,8 +238,13 @@
               pkgs.firefox
               pkgs.blueman
               pkgs.quickshell
-              pkgs.caelestia-shell
-              # Gives the launcher (and caelestia's app grid) a
+              # molunga-shell (../molunga-shell) isn't wired in as a flake
+              # input here - see the comment above the launch script's
+              # `command -v molunga-shell` check - so this test VM falls
+              # back to a bare `quickshell` with no shell config at all.
+              # Build molunga-shell's own flake and add its package here to
+              # exercise it in this VM.
+              # Gives the launcher (and molunga-shell's dock) a
               # "Compositor Settings" entry for the Fyne GUI above, rather
               # than requiring it to be run by exact binary name.
               (pkgs.makeDesktopItem {
