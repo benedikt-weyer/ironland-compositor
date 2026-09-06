@@ -204,6 +204,7 @@ pub fn run_winit() {
         .update_formats(state.backend_data.backend.renderer().shm_formats());
     state.space.map_output(&output, (0, 0));
     crate::shell::workspace::init_output(&state.config, &state.space, &output);
+    crate::ext_workspace::ext_workspace_sync(&mut state);
 
     #[cfg(feature = "xwayland")]
     state.start_xwayland();

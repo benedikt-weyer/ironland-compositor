@@ -145,6 +145,7 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     pub compositor_state: CompositorState,
     pub data_device_state: DataDeviceState,
     pub layer_shell_state: WlrLayerShellState,
+    pub workspace_manager_state: crate::ext_workspace::WorkspaceManagerState,
     pub output_manager_state: OutputManagerState,
     pub primary_selection_state: PrimarySelectionState,
     pub data_control_state: DataControlState,
@@ -728,6 +729,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         let compositor_state = CompositorState::new::<Self>(&dh);
         let data_device_state = DataDeviceState::new::<Self>(&dh);
         let layer_shell_state = WlrLayerShellState::new::<Self>(&dh);
+        let workspace_manager_state = crate::ext_workspace::WorkspaceManagerState::new::<Self>(&dh);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
         let data_control_state =
@@ -795,6 +797,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             compositor_state,
             data_device_state,
             layer_shell_state,
+            workspace_manager_state,
             output_manager_state,
             primary_selection_state,
             data_control_state,

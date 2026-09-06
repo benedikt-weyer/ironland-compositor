@@ -375,6 +375,25 @@ pub fn move_focused_window<B: Backend>(state: &mut AnvilState<B>, delta: i32) {
     show_overlay(state);
 }
 
+/// Activates workspace `idx` on `output`, e.g. in response to the
+/// `ext-workspace-v1` protocol's `activate` request. Applies the same
+/// `Combined`-mode fan-out as [`switch_workspace`]. `idx` is expected to
+/// name a workspace that already exists (protocol clients only ever hold
+/// handles for workspaces we've told them about), so unlike
+/// [`switch_workspace`]/[`move_focused_window`] this doesn't validate it
+/// against `count`/`dynamic` first.
+pub fn activate_workspace<B: Backend>(state: &mut AnvilState<B>, output: &Output, idx: usize) {
+    let outputs: Vec<Output> = if state.config.workspaces.mode == WorkspaceMode::Combined {
+        state.space.outputs().cloned().collect()
+    } else {
+        vec![output.clone()]
+    };
+    for o in &outputs {
+        set_active(state, o, idx);
+    }
+    show_overlay(state);
+}
+
 /// `(active, count)` for `output`'s workspaces, for the dot overlay.
 pub fn overlay_info(output: &Output) -> (usize, usize) {
     let ws = WorkspaceState::get(output);

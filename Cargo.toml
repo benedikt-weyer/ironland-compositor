@@ -8,6 +8,15 @@ license = "MIT"
 name = "ironland-copositor"
 path = "src/main.rs"
 
+# A small standalone Wayland client, not part of the compositor binary
+# itself: bridges the `ext-workspace-v1` global (see `src/ext_workspace.rs`)
+# to line-delimited JSON on stdin/stdout, since Quickshell (what
+# molunga-shell is built on) has no built-in support for that protocol.
+# See its own module doc for the wire format.
+[[bin]]
+name = "ironland-workspaces"
+path = "src/bin/ironland_workspaces.rs"
+
 [dependencies]
 bitflags = "2.2.1"
 rand = "0.8"
@@ -18,7 +27,12 @@ xcursor = "0.3.3"
 xkbcommon = "0.8.0"
 profiling = "1.0"
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.129"
 toml = "1.1.5"
+wayland-client = "0.31.15"
+wayland-protocols = { version = "0.32.13", default-features = false, features = ["staging", "client"] }
+calloop = "0.14.4"
+calloop-wayland-source = "0.4.1"
 
 [dependencies.smithay]
 git = "https://github.com/Smithay/smithay.git"

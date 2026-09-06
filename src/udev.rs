@@ -1207,6 +1207,7 @@ impl AnvilState<UdevData> {
 
         // fixup window coordinates
         crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
+        crate::ext_workspace::ext_workspace_sync(self);
     }
 
     fn device_removed(&mut self, node: DrmNode) {
@@ -1225,6 +1226,7 @@ impl AnvilState<UdevData> {
         for (connector, crtc) in crtcs {
             self.connector_disconnected(node, connector, crtc);
         }
+        crate::ext_workspace::ext_workspace_sync(self);
 
         debug!("Surfaces dropped");
 

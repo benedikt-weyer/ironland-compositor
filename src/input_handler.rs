@@ -222,11 +222,13 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             KeyAction::SwitchWorkspace(delta) => {
                 if let Some(output) = current_output_for_workspace_nav(self) {
                     crate::shell::workspace::switch_workspace(self, &output, delta);
+                    crate::ext_workspace::ext_workspace_sync(self);
                 }
             }
 
             KeyAction::MoveWindowWorkspace(delta) => {
                 crate::shell::workspace::move_focused_window(self, delta);
+                crate::ext_workspace::ext_workspace_sync(self);
             }
 
             _ => unreachable!(
