@@ -174,14 +174,19 @@ func buildShortcutsTab(cfg *Config) fyne.CanvasObject {
 func buildAppearanceTab(cfg *Config, w fyne.Window) fyne.CanvasObject {
 	defaults := defaultConfig()
 	resets := newResetGroup()
-	darkMode := widget.NewCheck("Dark mode", func(checked bool) {
+	// Set the loaded value directly (not via SetChecked, which fires
+	// OnChanged on any change from the zero value) so opening the window
+	// doesn't itself push a live color-scheme change before the user has
+	// touched anything.
+	darkMode := widget.NewCheck("Dark mode", nil)
+	darkMode.Checked = cfg.Appearance.DarkMode
+	darkMode.OnChanged = func(checked bool) {
 		cfg.Appearance.DarkMode = checked
 		resets.refresh()
 		if err := setSystemColorScheme(checked); err != nil {
 			dialog.ShowError(fmt.Errorf("setting system color scheme: %w", err), w)
 		}
-	})
-	darkMode.SetChecked(cfg.Appearance.DarkMode)
+	}
 
 	colorHint := widget.NewLabel(
 		"Applies immediately (and is also saved to config.toml so this toggle remembers its state)." +
