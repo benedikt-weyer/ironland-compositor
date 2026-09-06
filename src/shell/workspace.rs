@@ -111,6 +111,14 @@ impl WorkspaceState {
 /// `AnvilState` field (e.g. a backend device entry) at the call site.
 pub fn init_output(config: &Config, space: &Space<WindowElement>, output: &Output) {
     let settings = &config.workspaces;
+    // In dynamic mode workspaces are meant to grow on demand and prune back
+    // down to a minimum of one when empty (see `prune_trailing_empty`), so a
+    // freshly connected output starts at that floor rather than at
+    // `settings.count` - otherwise, since pruning only runs on a workspace
+    // switch, it would sit stuck showing `count` empty workspaces (e.g. in
+    // molunga-shell's workspace indicator) until the user first navigated
+    // away and back.
+    let initial_count = if settings.dynamic { 1 } else { settings.count.max(1) };
     let (active, count) = if settings.mode == WorkspaceMode::Combined {
         space
             .outputs()
@@ -119,9 +127,9 @@ pub fn init_output(config: &Config, space: &Space<WindowElement>, output: &Outpu
                 let other = WorkspaceState::get(o);
                 (other.active(), other.count())
             })
-            .unwrap_or((0, settings.count.max(1)))
+            .unwrap_or((0, initial_count))
     } else {
-        (0, settings.count.max(1))
+        (0, initial_count)
     };
     let ws = WorkspaceState::get(output);
     *ws.active.borrow_mut() = active;

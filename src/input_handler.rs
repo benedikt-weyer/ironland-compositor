@@ -582,6 +582,28 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         let horizontal_amount_discrete = evt.amount_v120(input::Axis::Horizontal);
         let vertical_amount_discrete = evt.amount_v120(input::Axis::Vertical);
 
+        // Super+wheel switches workspaces instead of scrolling the surface
+        // under the pointer, mirroring the `workspace_left`/`workspace_right`
+        // keybindings. Only fires on a discrete wheel step (not touchpad
+        // scroll), so it can't be triggered by continuous finger scrolling.
+        if let Some(discrete) = vertical_amount_discrete {
+            if discrete != 0.0 {
+                let logo_held = self
+                    .seat
+                    .get_keyboard()
+                    .map(|keyboard| keyboard.modifier_state().logo)
+                    .unwrap_or(false);
+                if logo_held {
+                    if let Some(output) = current_output_for_workspace_nav(self) {
+                        let delta = if discrete > 0.0 { 1 } else { -1 };
+                        crate::shell::workspace::switch_workspace(self, &output, delta);
+                        crate::ext_workspace::ext_workspace_sync(self);
+                    }
+                    return;
+                }
+            }
+        }
+
         {
             let mut frame = AxisFrame::new(evt.time()).source(evt.source());
             if horizontal_amount != 0.0 {
