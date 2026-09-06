@@ -450,6 +450,16 @@ pub fn known_actions() -> Vec<&'static str> {
     .to_vec()
 }
 
+/// True for an action name of the form `"shortcut:<name>"`, the escape
+/// hatch that lets `[shortcuts]` bind a key to an `ironland-shortcuts-v1`
+/// name (see `crate::shortcuts`) instead of one of the compositor's own
+/// fixed [`known_actions`]. Kept separate from `known_actions` since the
+/// set of valid `<name>`s is whatever a client has registered at runtime,
+/// not something this module can enumerate.
+fn is_shortcut_action(action: &str) -> bool {
+    action.starts_with("shortcut:")
+}
+
 fn config_search_path() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
@@ -558,7 +568,7 @@ impl Config {
         let mut bindings = Vec::new();
 
         for (action, specs) in &self.shortcuts {
-            if !known.contains(&action.as_str()) {
+            if !known.contains(&action.as_str()) && !is_shortcut_action(action) {
                 warn!(action, "Unknown action in [shortcuts] config, ignoring");
                 continue;
             }
@@ -599,7 +609,7 @@ impl Config {
             if !specs.iter().any(|spec| is_bare_modifier_tap(spec)) {
                 continue;
             }
-            if !known.contains(&action.as_str()) {
+            if !known.contains(&action.as_str()) && !is_shortcut_action(action) {
                 warn!(action, "Unknown action bound to a bare Super tap, ignoring");
                 continue;
             }

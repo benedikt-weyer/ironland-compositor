@@ -160,6 +160,8 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     pub layer_shell_state: WlrLayerShellState,
     pub workspace_manager_state: crate::ext_workspace::WorkspaceManagerState,
     pub foreign_toplevel_manager_state: crate::foreign_toplevel::ForeignToplevelManagerState,
+    pub shortcuts_manager_state: crate::shortcuts::ShortcutsManagerState,
+    pub focus_grab_manager_state: crate::focus_grab::FocusGrabManagerState,
     pub output_manager_state: OutputManagerState,
     pub primary_selection_state: PrimarySelectionState,
     pub data_control_state: DataControlState,
@@ -186,6 +188,11 @@ pub struct AnvilState<BackendData: Backend + 'static> {
 
     // input-related fields
     pub suppressed_keys: Vec<Keysym>,
+    /// Which shortcut name (see `crate::shortcuts`) each currently-held,
+    /// suppressed keysym triggered on press, so its release can fire that
+    /// same shortcut's `released` event (see
+    /// `input_handler::keyboard_key_to_action`).
+    pub(crate) held_shortcut_keys: HashMap<Keysym, String>,
     pub cursor_status: CursorImageStatus,
     pub seat_name: String,
     pub seat: Seat<AnvilState<BackendData>>,
@@ -296,6 +303,18 @@ impl<BackendData: Backend> DndGrabHandler for AnvilState<BackendData> {
         _location: Point<f64, Logical>,
     ) {
         self.dnd_icon = None;
+    }
+}
+
+impl<BackendData: Backend> crate::shortcuts::ShortcutsHandler for AnvilState<BackendData> {
+    fn shortcuts_state(&mut self) -> &mut crate::shortcuts::ShortcutsManagerState {
+        &mut self.shortcuts_manager_state
+    }
+}
+
+impl<BackendData: Backend> crate::focus_grab::FocusGrabHandler for AnvilState<BackendData> {
+    fn focus_grab_state(&mut self) -> &mut crate::focus_grab::FocusGrabManagerState {
+        &mut self.focus_grab_manager_state
     }
 }
 
@@ -768,6 +787,8 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         let workspace_manager_state = crate::ext_workspace::WorkspaceManagerState::new::<Self>(&dh);
         let foreign_toplevel_manager_state =
             crate::foreign_toplevel::ForeignToplevelManagerState::new::<Self>(&dh);
+        let shortcuts_manager_state = crate::shortcuts::ShortcutsManagerState::new::<Self>(&dh);
+        let focus_grab_manager_state = crate::focus_grab::FocusGrabManagerState::new::<Self>(&dh);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
         let data_control_state =
@@ -837,6 +858,8 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             layer_shell_state,
             workspace_manager_state,
             foreign_toplevel_manager_state,
+            shortcuts_manager_state,
+            focus_grab_manager_state,
             output_manager_state,
             primary_selection_state,
             data_control_state,
@@ -858,6 +881,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             image_copy_capture_state,
             dnd_icon: None,
             suppressed_keys: Vec::new(),
+            held_shortcut_keys: HashMap::new(),
             cursor_status: CursorImageStatus::default_named(),
             seat_name,
             seat,

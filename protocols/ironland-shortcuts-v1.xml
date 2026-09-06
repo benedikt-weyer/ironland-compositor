@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="ironland_shortcuts_v1">
+  <copyright>
+    Copyright © 2026 the ironland-copositor contributors
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the
+    "Software"), to deal in the Software without restriction, including
+    without limitation the rights to use, copy, modify, merge, publish,
+    distribute, sublicense, and/or sell copies of the Software, and to
+    permit persons to whom the Software is furnished to do so, subject to
+    the following conditions:
+
+    The above copyright notice and this permission notice shall be included
+    in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+    IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+    TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+    SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="named shortcuts triggered by compositor-configured keybinds">
+    Lets a client register a named shortcut whose actual key combination is
+    configured compositor-side (see ironland-copositor's `[shortcuts]`
+    config), and be told when it's pressed and released.
+
+    Unlike a generic global-shortcuts protocol, names are a flat namespace
+    shared by every client (there is no per-client id/app_id pairing) -
+    this is intended for a single trusted shell process, not arbitrary
+    third-party clients.
+  </description>
+
+  <interface name="ironland_shortcuts_manager_v1" version="1">
+    <description summary="manager for named shortcut objects">
+      This interface allows a client to obtain shortcut objects by name.
+    </description>
+
+    <request name="get_shortcut">
+      <description summary="obtain a shortcut object by name">
+        Create an object that reports presses/releases of the named
+        shortcut. `name` matches a key in the compositor's `[shortcuts]`
+        config; a name with no matching config simply never fires.
+
+        Requesting the same name more than once (from this client or
+        another) is allowed - every resulting object receives the events
+        independently.
+      </description>
+      <arg name="id" type="new_id" interface="ironland_shortcut_v1"/>
+      <arg name="name" type="string" summary="the shortcut name to listen for"/>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Destroying the manager doesn't destroy shortcut objects already
+        created through it.
+      </description>
+    </request>
+  </interface>
+
+  <interface name="ironland_shortcut_v1" version="1">
+    <description summary="a single named shortcut">
+      Reports presses and releases of the key combination the compositor
+      has configured for this shortcut's name.
+    </description>
+
+    <event name="pressed">
+      <description summary="the shortcut's key combination was pressed"/>
+    </event>
+
+    <event name="released">
+      <description summary="the shortcut's key combination was released"/>
+    </event>
+
+    <request name="destroy" type="destructor">
+      <description summary="stop listening for this shortcut"/>
+    </request>
+  </interface>
+</protocol>

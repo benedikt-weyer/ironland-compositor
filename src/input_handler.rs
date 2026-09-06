@@ -28,6 +28,7 @@ use smithay::{
     wayland::{
         input_method::InputMethodSeat,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
+        seat::WaylandFocus,
         shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer},
     },
 };
@@ -246,6 +247,9 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 crate::ext_workspace::ext_workspace_sync(self);
             }
 
+            KeyAction::Shortcut(name) => crate::shortcuts::fire(self, &name, true),
+            KeyAction::ShortcutReleased(name) => crate::shortcuts::fire(self, &name, false),
+
             _ => unreachable!(
                 "Common key action handler encountered backend specific action {:?}",
                 action
@@ -260,7 +264,15 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         let serial = SCOUNTER.next_serial();
         let time = Event::time(&evt);
         let mut suppressed_keys = self.suppressed_keys.clone();
+        let mut held_shortcut_keys = self.held_shortcut_keys.clone();
         let keyboard = self.seat.get_keyboard().unwrap();
+
+        if let KeyState::Pressed = state {
+            let focused = keyboard
+                .current_focus()
+                .and_then(|f| f.wl_surface().map(|s| s.into_owned()));
+            crate::focus_grab::check(self, focused.as_ref());
+        }
 
         for layer in self.layer_shell_state.layer_surfaces().rev() {
             let exclusive = layer.with_cached_state(|data| {
@@ -360,6 +372,10 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                             let action =
                                 process_keyboard_shortcut(&data.keybindings, *modifiers, keysym);
 
+                            if let Some(KeyAction::Shortcut(name)) = &action {
+                                held_shortcut_keys.insert(keysym, name.clone());
+                            }
+
                             if action.is_some() {
                                 suppressed_keys.push(keysym);
                             }
@@ -374,7 +390,10 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                         let suppressed = suppressed_keys.contains(&keysym);
                         if suppressed {
                             suppressed_keys.retain(|k| *k != keysym);
-                            FilterResult::Intercept(KeyAction::None)
+                            match held_shortcut_keys.remove(&keysym) {
+                                Some(name) => FilterResult::Intercept(KeyAction::ShortcutReleased(name)),
+                                None => FilterResult::Intercept(KeyAction::None),
+                            }
                         } else {
                             FilterResult::Forward
                         }
@@ -382,6 +401,8 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 },
             )
             .unwrap_or(KeyAction::None);
+
+        self.held_shortcut_keys = held_shortcut_keys;
 
         self.suppressed_keys = suppressed_keys;
         action
@@ -395,6 +416,12 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
         if wl_pointer::ButtonState::Pressed == state {
             self.update_keyboard_focus(self.pointer.current_location(), serial);
+
+            let focused = self
+                .pointer
+                .current_focus()
+                .and_then(|f| f.wl_surface().map(|s| s.into_owned()));
+            crate::focus_grab::check(self, focused.as_ref());
         };
         let pointer = self.pointer.clone();
         pointer.button(
@@ -855,7 +882,9 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     | KeyAction::SwapDirection(_)
                     | KeyAction::ResizeTiled(_)
                     | KeyAction::SwitchWorkspace(_)
-                    | KeyAction::MoveWindowWorkspace(_) => self.process_common_key_action(action),
+                    | KeyAction::MoveWindowWorkspace(_)
+                    | KeyAction::Shortcut(_)
+                    | KeyAction::ShortcutReleased(_) => self.process_common_key_action(action),
 
                     _ => tracing::warn!(
                         ?action,
@@ -1113,7 +1142,9 @@ impl AnvilState<UdevData> {
                     | KeyAction::SwapDirection(_)
                     | KeyAction::ResizeTiled(_)
                     | KeyAction::SwitchWorkspace(_)
-                    | KeyAction::MoveWindowWorkspace(_) => self.process_common_key_action(action),
+                    | KeyAction::MoveWindowWorkspace(_)
+                    | KeyAction::Shortcut(_)
+                    | KeyAction::ShortcutReleased(_) => self.process_common_key_action(action),
 
                     _ => unreachable!(),
                 },
@@ -1687,6 +1718,16 @@ pub(crate) enum KeyAction {
     /// Launch the currently selected application and close the launcher
     LauncherActivate,
     LauncherClose,
+    /// Fires `ironland_shortcut_v1.pressed` for the named shortcut (see
+    /// `config::action_for_name`'s `"shortcut:<name>"` convention and
+    /// `crate::shortcuts`). Produced only on a key press; the matching
+    /// release produces [`KeyAction::ShortcutReleased`] instead (tracked by
+    /// keysym in `keyboard_key_to_action`, the same way plain suppressed
+    /// keys are).
+    Shortcut(String),
+    /// Fires `ironland_shortcut_v1.released` for the named shortcut - the
+    /// release half of [`KeyAction::Shortcut`].
+    ShortcutReleased(String),
     /// Do nothing more
     None,
 }
@@ -1771,7 +1812,13 @@ fn action_for_name(
         "rotate_output" => KeyAction::RotateOutput,
         "toggle_tint" => KeyAction::ToggleTint,
         "toggle_decorations" => KeyAction::ToggleDecorations,
-        _ => return None,
+        _ => match name.strip_prefix("shortcut:") {
+            // See `config::is_shortcut_action` - a `"shortcut:<name>"`
+            // action fires `ironland_shortcut_v1` events for `<name>`
+            // rather than an internal compositor action.
+            Some(shortcut_name) => KeyAction::Shortcut(shortcut_name.to_string()),
+            None => return None,
+        },
     })
 }
 

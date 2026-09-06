@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="ironland_focus_grab_v1">
+  <copyright>
+    Copyright © 2026 the ironland-copositor contributors
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the
+    "Software"), to deal in the Software without restriction, including
+    without limitation the rights to use, copy, modify, merge, publish,
+    distribute, sublicense, and/or sell copies of the Software, and to
+    permit persons to whom the Software is furnished to do so, subject to
+    the following conditions:
+
+    The above copyright notice and this permission notice shall be included
+    in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+    IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+    TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+    SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="close-on-outside-click for a single surface">
+    Lets a client be told when the user interacts outside a surface it
+    cares about, so it can dismiss a popup/menu - the "click outside to
+    close" pattern.
+
+    Deliberately narrower than a general focus-limiting protocol: one grab
+    always covers exactly one surface (a shell popout is always one
+    layer-shell surface), so there is no whitelist/commit dance - just
+    create, get told when it's cleared, destroy.
+  </description>
+
+  <interface name="ironland_focus_grab_manager_v1" version="1">
+    <description summary="manager for focus grab objects">
+      This interface allows a client to create focus grab objects.
+    </description>
+
+    <request name="grab">
+      <description summary="grab focus around a surface">
+        While the returned object is alive, a pointer or touch event
+        outside `surface`, or a key press while `surface` doesn't have
+        keyboard focus, clears the grab: the compositor sends `cleared`
+        and the grab becomes inert (further input outside the surface is
+        not reported again - destroy and re-request to grab again).
+
+        Destroying `surface` clears the grab the same way.
+      </description>
+      <arg name="id" type="new_id" interface="ironland_focus_grab_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Destroying the manager doesn't destroy grab objects already
+        created through it.
+      </description>
+    </request>
+  </interface>
+
+  <interface name="ironland_focus_grab_v1" version="1">
+    <description summary="an active focus grab">
+      See `ironland_focus_grab_manager_v1.grab`.
+    </description>
+
+    <event name="cleared">
+      <description summary="the grab was cleared">
+        Sent at most once per object, the first time an outside
+        interaction (or the grabbed surface's destruction) clears the
+        grab.
+      </description>
+    </event>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the grab">
+        Ends the grab immediately if it's still active. No `cleared`
+        event is sent for an explicit destroy.
+      </description>
+    </request>
+  </interface>
+</protocol>

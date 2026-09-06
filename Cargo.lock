@@ -689,9 +689,12 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "wayland-backend",
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",
+ "wayland-scanner",
+ "wayland-server",
  "xcursor",
  "xkbcommon 0.8.0",
 ]

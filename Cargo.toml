@@ -35,6 +35,17 @@ calloop = "0.14.4"
 calloop-wayland-source = "0.4.1"
 image = { version = "0.25.10", default-features = false, features = ["webp", "png", "jpeg"] }
 wayland-protocols-wlr = { version = "0.3.12", default-features = false, features = ["server"] }
+# Pinned to the exact versions smithay (see the `[dependencies.smithay]`
+# git rev below) resolves to, so these are the same crate instances as
+# `smithay::reexports::wayland_server`/`wayland_backend` - not a second,
+# incompatible copy. Needed directly (rather than only transitively through
+# smithay) to generate server bindings for Hyprland's own protocol
+# extensions (`hyprland-focus-grab-v1`, `hyprland-global-shortcuts-v1`; see
+# `src/hyprland_protocols.rs`), which aren't in the `wayland-protocols`/
+# `wayland-protocols-wlr` crates.
+wayland-server = "0.31.14"
+wayland-backend = "0.3.17"
+wayland-scanner = "0.31.11"
 
 [dependencies.smithay]
 git = "https://github.com/Smithay/smithay.git"

@@ -12,9 +12,11 @@ pub mod config;
 pub mod cursor;
 pub mod drawing;
 pub mod focus;
+pub mod focus_grab;
 pub mod font;
 pub mod foreign_toplevel;
 pub mod input_handler;
+pub mod ironland_protocols;
 pub mod launcher;
 #[cfg(feature = "libei")]
 pub mod libei;
@@ -31,5 +33,6 @@ pub mod winit;
 #[cfg(feature = "x11")]
 pub mod x11;
 pub mod ext_workspace;
+pub mod shortcuts;
 
 pub use state::{AnvilState, ClientState};
