@@ -578,11 +578,24 @@ pub fn retile_all_outputs<BackendData: Backend>(state: &mut AnvilState<BackendDa
 }
 
 /// Drop dead windows from every output's tiling tree (every workspace, not
-/// just the active one) and re-flow whichever active workspaces changed.
-/// Returns whether any window was removed.
+/// just the active one) and re-flow whichever active workspaces changed. If
+/// the currently focused window is among the casualties, focus moves to its
+/// nearest surviving neighbor in the same tiling tree, falling back to
+/// whatever else is left on that workspace. Returns whether any window was
+/// removed.
 pub fn cleanup_dead<BackendData: Backend>(state: &mut AnvilState<BackendData>) -> bool {
     let outputs: Vec<Output> = state.space.outputs().cloned().collect();
     let mut changed = false;
+
+    let dead_focus = current_focused_window(state).filter(|w| !w.alive());
+    let fallback = dead_focus.as_ref().and_then(|focused| {
+        let (output, idx) = locate(state, focused)?;
+        let area = tiling_area(&state.space, &output);
+        let rects = TilingState::tree(&output, idx).layout(area);
+        let replacement = nearest_neighbor(&rects, focused);
+        Some((output, idx, replacement))
+    });
+
     for output in &outputs {
         let active = WorkspaceState::get(output).active();
         let mut active_changed = false;
@@ -595,11 +608,30 @@ pub fn cleanup_dead<BackendData: Backend>(state: &mut AnvilState<BackendData>) -
             apply_layout(state, output);
         }
     }
-    changed | crate::shell::workspace::cleanup_dead(state)
+    changed |= crate::shell::workspace::cleanup_dead(state);
+
+    if dead_focus.is_some() {
+        match fallback.as_ref().and_then(|(_, _, w)| w.clone()).filter(|w| w.alive()) {
+            Some(target) => raise_and_focus(state, &target),
+            None => match fallback {
+                Some((output, idx, _)) => crate::shell::workspace::focus_first_in_workspace(state, &output, idx),
+                None => {
+                    if let Some(keyboard) = state.seat.get_keyboard() {
+                        let serial = SERIAL_COUNTER.next_serial();
+                        keyboard.set_focus(state, None, serial);
+                    }
+                }
+            },
+        }
+    }
+
+    changed
 }
 
 /// Move keyboard focus to the tiled window neighboring the currently focused
-/// one in `dir`. No-op if the focused window isn't tiled.
+/// one in `dir`. No-op if the focused window isn't tiled. If there is no
+/// neighbor in that direction on the current output, hops to the adjacent
+/// monitor in `dir` (per the monitor layout) instead, focusing a window there.
 pub fn focus_direction<BackendData: Backend>(state: &mut AnvilState<BackendData>, dir: Direction) {
     let Some(focused) = current_focused_window(state) else {
         return;
@@ -611,6 +643,11 @@ pub fn focus_direction<BackendData: Backend>(state: &mut AnvilState<BackendData>
     let rects = TilingState::tree(&output, idx).layout(area);
     if let Some(target) = neighbor(&rects, &focused, dir) {
         raise_and_focus(state, &target);
+        return;
+    }
+    if let Some(next_output) = output_in_direction(state, &output, dir) {
+        let next_idx = WorkspaceState::get(&next_output).active();
+        crate::shell::workspace::focus_first_in_workspace(state, &next_output, next_idx);
     }
 }
 
@@ -647,8 +684,29 @@ pub fn resize_tiled<BackendData: Backend>(state: &mut AnvilState<BackendData>, d
     apply_layout(state, &output);
 }
 
-fn leaf_center(rect: &Rectangle<i32, Logical>) -> (i32, i32) {
+fn center(rect: &Rectangle<i32, Logical>) -> (i32, i32) {
     (rect.loc.x + rect.size.w / 2, rect.loc.y + rect.size.h / 2)
+}
+
+/// Score how well `to` sits in `dir` relative to `from`, lower being closer.
+/// `None` if `to` isn't in that direction at all.
+fn directional_score(dir: Direction, from: (i32, i32), to: (i32, i32)) -> Option<i64> {
+    let (fx, fy) = from;
+    let (tx, ty) = to;
+    let matches_dir = match dir {
+        Direction::Left => tx < fx,
+        Direction::Right => tx > fx,
+        Direction::Up => ty < fy,
+        Direction::Down => ty > fy,
+    };
+    if !matches_dir {
+        return None;
+    }
+    let (primary, secondary) = match dir {
+        Direction::Left | Direction::Right => ((tx - fx).abs(), (ty - fy).abs()),
+        Direction::Up | Direction::Down => ((ty - fy).abs(), (tx - fx).abs()),
+    };
+    Some(primary as i64 * 4 + secondary as i64)
 }
 
 fn neighbor(
@@ -657,31 +715,68 @@ fn neighbor(
     dir: Direction,
 ) -> Option<WindowElement> {
     let focused_rect = rects.iter().find(|(w, _)| w == focused)?.1;
-    let (fx, fy) = leaf_center(&focused_rect);
+    let from = center(&focused_rect);
 
     let mut best: Option<(i64, WindowElement)> = None;
     for (w, r) in rects {
         if w == focused {
             continue;
         }
-        let (cx, cy) = leaf_center(r);
-        let matches_dir = match dir {
-            Direction::Left => cx < fx,
-            Direction::Right => cx > fx,
-            Direction::Up => cy < fy,
-            Direction::Down => cy > fy,
-        };
-        if !matches_dir {
+        let Some(score) = directional_score(dir, from, center(r)) else {
             continue;
-        }
-        let (primary, secondary) = match dir {
-            Direction::Left | Direction::Right => ((cx - fx).abs(), (cy - fy).abs()),
-            Direction::Up | Direction::Down => ((cy - fy).abs(), (cx - fx).abs()),
         };
-        let score = primary as i64 * 4 + secondary as i64;
         if best.as_ref().is_none_or(|(best_score, _)| score < *best_score) {
             best = Some((score, w.clone()));
         }
     }
     best.map(|(_, w)| w)
+}
+
+/// The output adjacent to `from` in `dir`, per the outputs' arranged
+/// positions in `state.space` (i.e. the monitor layout), if any.
+fn output_in_direction<BackendData: Backend>(
+    state: &AnvilState<BackendData>,
+    from: &Output,
+    dir: Direction,
+) -> Option<Output> {
+    let from_geo = state.space.output_geometry(from)?;
+    let origin = center(&from_geo);
+
+    let mut best: Option<(i64, Output)> = None;
+    for output in state.space.outputs() {
+        if output == from {
+            continue;
+        }
+        let Some(geo) = state.space.output_geometry(output) else {
+            continue;
+        };
+        let Some(score) = directional_score(dir, origin, center(&geo)) else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(best_score, _)| score < *best_score) {
+            best = Some((score, output.clone()));
+        }
+    }
+    best.map(|(_, o)| o)
+}
+
+/// The tiled window in `rects` geometrically closest to `focused`, in any
+/// direction. Used to pick a replacement focus when `focused` is about to
+/// disappear (e.g. it was just closed).
+fn nearest_neighbor(
+    rects: &[(WindowElement, Rectangle<i32, Logical>)],
+    focused: &WindowElement,
+) -> Option<WindowElement> {
+    let focused_rect = rects.iter().find(|(w, _)| w == focused)?.1;
+    let (fx, fy) = center(&focused_rect);
+    rects
+        .iter()
+        .filter(|(w, _)| w != focused)
+        .min_by_key(|(_, r)| {
+            let (cx, cy) = center(r);
+            let dx = (cx - fx) as i64;
+            let dy = (cy - fy) as i64;
+            dx * dx + dy * dy
+        })
+        .map(|(w, _)| w.clone())
 }

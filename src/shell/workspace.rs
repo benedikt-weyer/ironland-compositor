@@ -303,7 +303,7 @@ fn show_workspace<B: Backend>(state: &mut AnvilState<B>, output: &Output, idx: u
     }
 }
 
-fn focus_first_in_workspace<B: Backend>(state: &mut AnvilState<B>, output: &Output, idx: usize) {
+pub(crate) fn focus_first_in_workspace<B: Backend>(state: &mut AnvilState<B>, output: &Output, idx: usize) {
     let candidate = tiling::TilingState::tree(output, idx)
         .windows()
         .into_iter()
