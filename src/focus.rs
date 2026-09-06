@@ -259,9 +259,11 @@ impl<BackendData: Backend> KeyboardTarget<AnvilState<BackendData>> for KeyboardF
         serial: Serial,
     ) {
         self.inner_keyboard_target().enter(seat, data, keys, serial);
-        if matches!(self, KeyboardFocusTarget::Window(_)) {
-            crate::foreign_toplevel::sync(data);
-        }
+        let focused = match self {
+            KeyboardFocusTarget::Window(window) => Some(WindowElement(window.clone())),
+            _ => None,
+        };
+        crate::foreign_toplevel::sync_with_focus(data, focused.as_ref());
     }
     fn leave(
         &self,
@@ -270,9 +272,27 @@ impl<BackendData: Backend> KeyboardTarget<AnvilState<BackendData>> for KeyboardF
         serial: Serial,
     ) {
         self.inner_keyboard_target().leave(seat, data, serial);
-        if matches!(self, KeyboardFocusTarget::Window(_)) {
-            crate::foreign_toplevel::sync(data);
-        }
+        crate::foreign_toplevel::sync_with_focus(data, None);
+    }
+    fn replace(
+        &self,
+        replaced: KeyboardFocusTarget,
+        seat: &Seat<AnvilState<BackendData>>,
+        data: &mut AnvilState<BackendData>,
+        keys: Vec<KeysymHandle<'_>>,
+        modifiers: ModifiersState,
+        serial: Serial,
+    ) {
+        replaced.inner_keyboard_target().leave(seat, data, serial);
+        self.inner_keyboard_target().enter(seat, data, keys, serial);
+        self.inner_keyboard_target()
+            .modifiers(seat, data, modifiers, serial);
+
+        let focused = match self {
+            KeyboardFocusTarget::Window(window) => Some(WindowElement(window.clone())),
+            _ => None,
+        };
+        crate::foreign_toplevel::sync_with_focus(data, focused.as_ref());
     }
     fn key(
         &self,

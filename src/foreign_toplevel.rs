@@ -167,16 +167,30 @@ where
         + Dispatch<ZwlrForeignToplevelHandleV1, ToplevelData>
         + AsWindowsFocusAndDisplay,
 {
+    let focused = state.focused_window();
+    sync_with_focus(state, focused.as_ref());
+}
+
+/// Updates all clients after a keyboard-focus callback. Smithay invokes those
+/// callbacks while its keyboard mutex is held, so they must use the focus value
+/// supplied by Smithay rather than calling [`AsWindowsFocusAndDisplay::focused_window`],
+/// which would try to lock the same mutex again.
+pub(crate) fn sync_with_focus<D>(state: &mut D, focused: Option<&WindowElement>)
+where
+    D: ForeignToplevelHandler
+        + Dispatch<ZwlrForeignToplevelManagerV1, ManagerToken>
+        + Dispatch<ZwlrForeignToplevelHandleV1, ToplevelData>
+        + AsWindowsFocusAndDisplay,
+{
     let dh = state.display_handle();
     let windows = state.all_windows();
-    let focused = state.focused_window();
     let proto = state.foreign_toplevel_state();
 
     for instance in &mut proto.instances {
         let Ok(client) = dh.get_client(instance.manager.id()) else {
             continue;
         };
-        sync_instance::<D>(&dh, &client, instance, &windows, focused.as_ref());
+        sync_instance::<D>(&dh, &client, instance, &windows, focused);
     }
 }
 
