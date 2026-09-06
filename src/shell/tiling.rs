@@ -10,6 +10,7 @@ use std::cell::{Ref, RefCell, RefMut};
 use smithay::{
     desktop::{Space, layer_map_for_output},
     output::Output,
+    reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{IsAlive, Logical, Point, Rectangle, SERIAL_COUNTER},
     wayland::{compositor::with_states, shell::xdg::SurfaceCachedState},
 };
@@ -401,6 +402,27 @@ pub(crate) fn current_focused_window<BackendData: Backend>(
         KeyboardFocusTarget::Window(w) => Some(WindowElement(w)),
         _ => None,
     }
+}
+
+/// Re-applies a tiled window's own layout on every commit of its surface.
+///
+/// A client is supposed to honor a configure's suggested size, but not every
+/// toolkit's very first (pre-map) commit reliably does - some render at
+/// their own preferred/minimum content size regardless of what was
+/// suggested, only picking up server-driven resizes correctly once they're
+/// already mapped. Re-checking here, on each real commit, makes the tile the
+/// window was assigned the source of truth continuously rather than only at
+/// insert time: `apply_layout` already no-ops (no configure sent) once the
+/// window's pending size already matches its tile, so this is cheap once
+/// the window has caught up.
+pub(crate) fn resync_committed_window<BackendData: Backend>(state: &mut AnvilState<BackendData>, surface: &WlSurface) {
+    let Some(window) = state.window_for_surface(surface) else {
+        return;
+    };
+    let Some((output, _idx)) = locate(state, &window) else {
+        return;
+    };
+    apply_layout(state, &output);
 }
 
 pub(crate) fn raise_and_focus<BackendData: Backend>(state: &mut AnvilState<BackendData>, window: &WindowElement) {

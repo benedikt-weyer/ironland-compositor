@@ -57,6 +57,7 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
 
         compositor::add_post_commit_hook(surface.wl_surface(), |state: &mut Self, _, surface| {
             handle_toplevel_commit(&mut state.space, surface);
+            tiling::resync_committed_window(state, surface);
         });
 
         crate::foreign_toplevel::sync(self);
