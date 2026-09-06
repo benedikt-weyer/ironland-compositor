@@ -62,11 +62,11 @@ git = "https://github.com/Smithay/smithay.git"
 rev = "28c8e0fad905f3e7d01c2446fb60d26659071684"
 
 [features]
-default = ["egl", "winit", "udev"]
+default = ["egl", "winit", "udev", "xwayland"]
 egl = []
 winit = []
 udev = []
 debug = []
 x11 = []
-xwayland = []
+xwayland = ["smithay/xwayland"]
 libei = []
