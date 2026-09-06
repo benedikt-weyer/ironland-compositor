@@ -58,6 +58,20 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
         compositor::add_post_commit_hook(surface.wl_surface(), |state: &mut Self, _, surface| {
             handle_toplevel_commit(&mut state.space, surface);
         });
+
+        crate::foreign_toplevel::sync(self);
+    }
+
+    fn toplevel_destroyed(&mut self, _surface: ToplevelSurface) {
+        crate::foreign_toplevel::sync(self);
+    }
+
+    fn app_id_changed(&mut self, _surface: ToplevelSurface) {
+        crate::foreign_toplevel::sync(self);
+    }
+
+    fn title_changed(&mut self, _surface: ToplevelSurface) {
+        crate::foreign_toplevel::sync(self);
     }
 
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {

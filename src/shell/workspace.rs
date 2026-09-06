@@ -400,6 +400,47 @@ pub fn overlay_info(output: &Output) -> (usize, usize) {
     (ws.active(), ws.count())
 }
 
+/// Every window belonging to `output`, across *every* workspace it has (not
+/// just the active one) - tiled and floating alike.
+fn all_windows_on_output(output: &Output) -> Vec<WindowElement> {
+    let mut windows: Vec<WindowElement> =
+        tiling::TilingState::all(output).iter().flat_map(tiling::TilingLayout::windows).collect();
+    windows.extend(WorkspaceState::get(output).floating.borrow().iter().flatten().cloned());
+    windows
+}
+
+/// Every window the compositor currently knows about, across every output
+/// and workspace. Used by [`crate::foreign_toplevel`] to list every running
+/// app regardless of which workspace currently hides it - unlike
+/// `state.space.elements()`, which only sees the *visible* (active-workspace)
+/// ones.
+pub(crate) fn all_windows<B: Backend>(state: &AnvilState<B>) -> Vec<WindowElement> {
+    state.space.outputs().flat_map(all_windows_on_output).collect()
+}
+
+/// The output+workspace `window` is currently homed to (tiled or floating),
+/// if it's been assigned one yet (see [`assign_new_window`]/[`mark_floating`]).
+pub(crate) fn window_home(window: &WindowElement) -> Option<(Output, usize)> {
+    let home = WindowHome::get(window);
+    let output = home.output.borrow().clone()?;
+    Some((output, *home.index.borrow()))
+}
+
+/// Switches to whichever workspace `window` is homed to (if it isn't
+/// already the active one on its output) and focuses it. Backs the
+/// `zwlr_foreign_toplevel_handle_v1.activate` request - see
+/// [`crate::foreign_toplevel`].
+pub(crate) fn activate_window<B: Backend>(state: &mut AnvilState<B>, window: &WindowElement) {
+    if let Some((output, idx)) = window_home(window)
+        && idx != WorkspaceState::get(&output).active()
+    {
+        activate_workspace(state, &output, idx);
+    }
+    if window.alive() {
+        tiling::raise_and_focus(state, window);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

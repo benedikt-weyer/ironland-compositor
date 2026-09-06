@@ -682,6 +682,7 @@ dependencies = [
  "tracing-subscriber",
  "wayland-client",
  "wayland-protocols",
+ "wayland-protocols-wlr",
  "xcursor",
  "xkbcommon 0.8.0",
 ]

@@ -13,6 +13,7 @@ pub mod cursor;
 pub mod drawing;
 pub mod focus;
 pub mod font;
+pub mod foreign_toplevel;
 pub mod input_handler;
 pub mod launcher;
 #[cfg(feature = "libei")]

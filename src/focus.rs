@@ -258,7 +258,10 @@ impl<BackendData: Backend> KeyboardTarget<AnvilState<BackendData>> for KeyboardF
         keys: Vec<KeysymHandle<'_>>,
         serial: Serial,
     ) {
-        self.inner_keyboard_target().enter(seat, data, keys, serial)
+        self.inner_keyboard_target().enter(seat, data, keys, serial);
+        if matches!(self, KeyboardFocusTarget::Window(_)) {
+            crate::foreign_toplevel::sync(data);
+        }
     }
     fn leave(
         &self,
@@ -266,7 +269,10 @@ impl<BackendData: Backend> KeyboardTarget<AnvilState<BackendData>> for KeyboardF
         data: &mut AnvilState<BackendData>,
         serial: Serial,
     ) {
-        self.inner_keyboard_target().leave(seat, data, serial)
+        self.inner_keyboard_target().leave(seat, data, serial);
+        if matches!(self, KeyboardFocusTarget::Window(_)) {
+            crate::foreign_toplevel::sync(data);
+        }
     }
     fn key(
         &self,
