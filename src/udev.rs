@@ -220,6 +220,15 @@ impl Backend for UdevData {
         }
     }
 
+    fn apply_cursor_config(state: &mut AnvilState<Self>) {
+        state.backend_data.pointer_image = crate::cursor::Cursor::load(&state.config.cursor);
+        // Cached render buffers are keyed off the xcursor `Image` they were
+        // built from, so stale entries from the old theme just go unused;
+        // dropping them avoids holding onto memory for a theme no longer in
+        // use.
+        state.backend_data.pointer_images.clear();
+    }
+
     fn update_led_state(&mut self, led_state: LedState) {
         for keyboard in self.keyboards.iter_mut() {
             keyboard.led_update(led_state.into());
@@ -355,7 +364,7 @@ pub fn run_udev() {
         primary_gpu,
         gpus,
         backends: HashMap::new(),
-        pointer_image: crate::cursor::Cursor::load(),
+        pointer_image: crate::cursor::Cursor::load(&crate::config::Config::load().cursor),
         pointer_images: Vec::new(),
         pointer_element: PointerElement::default(),
         #[cfg(feature = "debug")]

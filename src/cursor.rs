@@ -14,14 +14,19 @@ pub struct Cursor {
 }
 
 impl Cursor {
-    pub fn load() -> Cursor {
-        let name = std::env::var("XCURSOR_THEME")
-            .ok()
-            .unwrap_or_else(|| "default".into());
-        let size = std::env::var("XCURSOR_SIZE")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(24);
+    /// Loads the cursor theme named by `settings`, falling back to the
+    /// `XCURSOR_THEME`/`XCURSOR_SIZE` environment variables (and then their
+    /// own built-in defaults) for whichever of theme/size isn't configured.
+    pub fn load(settings: &crate::config::CursorSettings) -> Cursor {
+        let name = settings.theme.clone().unwrap_or_else(|| {
+            std::env::var("XCURSOR_THEME").unwrap_or_else(|_| "default".into())
+        });
+        let size = settings.size.unwrap_or_else(|| {
+            std::env::var("XCURSOR_SIZE")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(24)
+        });
 
         let theme = CursorTheme::load(&name);
         let icons = load_icon(&theme)

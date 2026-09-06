@@ -32,6 +32,15 @@ type BlurSettings struct {
 	Radius  int  `toml:"radius"`
 }
 
+// CursorSettings mirrors `config::CursorSettings` in the compositor: an
+// empty Theme, or a Size of 0, means "fall back to the XCURSOR_THEME/
+// XCURSOR_SIZE environment variables, or the compositor's own built-in
+// default if those aren't set either".
+type CursorSettings struct {
+	Theme string `toml:"theme,omitempty"`
+	Size  int    `toml:"size,omitempty"`
+}
+
 // WorkspaceSettings mirrors `config::WorkspaceSettings` in the compositor:
 // how many virtual desktops exist, whether each output gets its own set or
 // every output shares one, whether the count grows/shrinks on demand, and
@@ -61,6 +70,7 @@ type Config struct {
 	// Empty uses the compositor's built-in default wallpaper.
 	Wallpaper  string                    `toml:"wallpaper,omitempty"`
 	Blur       BlurSettings              `toml:"blur"`
+	Cursor     CursorSettings            `toml:"cursor"`
 	Appearance AppearanceSettings        `toml:"appearance"`
 	Shortcuts  map[string][]string       `toml:"shortcuts"`
 	Outputs    map[string]OutputSettings `toml:"outputs"`
@@ -285,6 +295,7 @@ func loadConfig() (Config, string) {
 		if raw.Blur.Radius > 0 {
 			cfg.Blur.Radius = raw.Blur.Radius
 		}
+		cfg.Cursor = raw.Cursor
 		cfg.Appearance = raw.Appearance
 		cfg.Keyboard = raw.Keyboard
 		for action, keys := range raw.Shortcuts {

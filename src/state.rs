@@ -961,6 +961,9 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             BackendData::apply_output_config(self, &old_config);
             self.apply_output_positions();
         }
+        if self.config.cursor != old_config.cursor {
+            BackendData::apply_cursor_config(self);
+        }
         crate::ext_workspace::ext_workspace_sync(self);
     }
 
@@ -1078,7 +1081,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
                     )
                     .expect("Failed to attach X11 Window Manager");
 
-                    let cursor = Cursor::load();
+                    let cursor = Cursor::load(&data.config.cursor);
                     let image = cursor.get_image(1, Duration::ZERO);
                     wm.set_cursor(
                         &image.pixels_rgba,
@@ -1476,6 +1479,14 @@ pub trait Backend {
     fn early_import(&mut self, surface: &WlSurface);
     fn update_led_state(&mut self, led_state: LedState);
     fn apply_output_config(_state: &mut AnvilState<Self>, _old_config: &crate::config::Config)
+    where
+        Self: Sized,
+    {
+    }
+    /// Reloads the rendered mouse cursor after `cursor` settings change.
+    /// No-op by default: only backends that render their own cursor image
+    /// (currently the udev/DRM backend) need to act on this.
+    fn apply_cursor_config(_state: &mut AnvilState<Self>)
     where
         Self: Sized,
     {

@@ -249,6 +249,44 @@ func buildAppearanceTab(cfg *Config, w fyne.Window) fyne.CanvasObject {
 	blurHint := widget.NewLabel("Gaussian blur is visible through transparent and translucent parts of application windows. Higher radii are smoother but require more work when the wallpaper changes or an output is resized. Changes apply when saved.")
 	blurHint.Wrapping = fyne.TextWrapWord
 
+	cursorTheme := widget.NewEntry()
+	cursorTheme.SetText(cfg.Cursor.Theme)
+	cursorTheme.SetPlaceHolder("e.g. Adwaita, Bibata-Modern-Classic (empty = system default)")
+	cursorTheme.OnChanged = func(s string) { cfg.Cursor.Theme = s; resets.refresh() }
+
+	cursorSize := widget.NewEntry()
+	cursorSize.SetText(formatCursorSize(cfg.Cursor.Size))
+	cursorSize.SetPlaceHolder("empty = system default (usually 24)")
+	cursorSize.OnChanged = func(value string) {
+		if value == "" {
+			cfg.Cursor.Size = 0
+			resets.refresh()
+			return
+		}
+		var size int
+		if _, err := fmt.Sscanf(value, "%d", &size); err == nil && size > 0 {
+			cfg.Cursor.Size = size
+		}
+		resets.refresh()
+	}
+	cursorForm := widget.NewForm(
+		widget.NewFormItem("Cursor theme", resets.item(cursorTheme,
+			func() bool { return cfg.Cursor.Theme != defaults.Cursor.Theme },
+			func() { cursorTheme.SetText(defaults.Cursor.Theme) },
+		)),
+		widget.NewFormItem("Cursor size", resets.item(cursorSize,
+			func() bool { return cfg.Cursor.Size != defaults.Cursor.Size },
+			func() { cursorSize.SetText(formatCursorSize(defaults.Cursor.Size)) },
+		)),
+	)
+	cursorHint := widget.NewLabel(
+		"Name of an installed Xcursor theme (as found under an icons directory's cursors/ subfolder), and the" +
+			" nominal cursor size in pixels. Leaving either empty falls back to the XCURSOR_THEME/XCURSOR_SIZE" +
+			" environment variables, or the compositor's own built-in cursor if those aren't set either." +
+			" Changes apply live without needing to reopen windows.",
+	)
+	cursorHint.Wrapping = fyne.TextWrapWord
+
 	darkModeRow := resets.item(darkMode,
 		func() bool { return cfg.Appearance.DarkMode != defaults.Appearance.DarkMode },
 		func() { darkMode.SetChecked(defaults.Appearance.DarkMode) },
@@ -263,6 +301,7 @@ func buildAppearanceTab(cfg *Config, w fyne.Window) fyne.CanvasObject {
 		darkModeRow, colorHint,
 		widget.NewSeparator(), wallpaperForm, wallpaperHint,
 		widget.NewSeparator(), blurForm, blurHint,
+		widget.NewSeparator(), cursorForm, cursorHint,
 	))
 }
 
@@ -331,6 +370,16 @@ func buildWorkspacesTab(cfg *Config) fyne.CanvasObject {
 	hint.Wrapping = fyne.TextWrapWord
 
 	return resets.page(container.NewVBox(form, hint))
+}
+
+// formatCursorSize renders a CursorSettings.Size for display: 0 means
+// "unset" (fall back to XCURSOR_SIZE/the compositor default), shown as an
+// empty field rather than "0".
+func formatCursorSize(size int) string {
+	if size <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", size)
 }
 
 func equalStrings(a, b []string) bool {

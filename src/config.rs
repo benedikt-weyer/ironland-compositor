@@ -208,6 +208,17 @@ pub struct WorkspaceSettings {
     pub overlay: bool,
 }
 
+/// Mouse cursor theme settings, passed to the `xcursor` crate the same way
+/// the `XCURSOR_THEME`/`XCURSOR_SIZE` environment variables are: `None`
+/// means "fall back to that environment variable, or its own built-in
+/// default if that isn't set either".
+#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
+#[serde(default)]
+pub struct CursorSettings {
+    pub theme: Option<String>,
+    pub size: Option<u32>,
+}
+
 /// Background blur shown through translucent application surfaces.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(default)]
@@ -258,6 +269,7 @@ struct RawConfig {
     top_bar: bool,
     wallpaper: Option<String>,
     blur: BlurSettings,
+    cursor: CursorSettings,
     shortcuts: HashMap<String, Vec<String>>,
     outputs: HashMap<String, OutputSettings>,
     workspaces: WorkspaceSettings,
@@ -284,6 +296,8 @@ pub struct Config {
     pub wallpaper: Option<String>,
     /// Gaussian backdrop blur settings for translucent application windows.
     pub blur: BlurSettings,
+    /// Mouse cursor theme/size (see [`CursorSettings`]).
+    pub cursor: CursorSettings,
     /// action name -> key combos, e.g. `"toggle_launcher" -> ["ctrl+space"]`.
     /// Always fully populated: entries not overridden by the config file
     /// keep their built-in default.
@@ -306,6 +320,7 @@ impl Default for Config {
             top_bar: false,
             wallpaper: None,
             blur: BlurSettings::default(),
+            cursor: CursorSettings::default(),
             shortcuts: default_shortcuts(),
             outputs: HashMap::new(),
             workspaces: WorkspaceSettings::default(),
@@ -487,6 +502,7 @@ impl Config {
                     top_bar: raw.top_bar,
                     wallpaper: raw.wallpaper,
                     blur: raw.blur,
+                    cursor: raw.cursor,
                     shortcuts,
                     outputs: raw.outputs,
                     workspaces: raw.workspaces,
@@ -724,6 +740,7 @@ mod tests {
             top_bar: false,
             wallpaper: None,
             blur: BlurSettings::default(),
+            cursor: CursorSettings::default(),
             shortcuts,
             outputs: HashMap::new(),
             workspaces: WorkspaceSettings::default(),
@@ -904,6 +921,19 @@ mod tests {
                 radius: 20
             }
         );
+    }
+
+    #[test]
+    fn cursor_settings_default_to_none_but_can_be_set() {
+        let raw: RawConfig = toml::from_str("").unwrap();
+        assert_eq!(raw.cursor, CursorSettings::default());
+        assert_eq!(raw.cursor.theme, None);
+        assert_eq!(raw.cursor.size, None);
+
+        let raw: RawConfig =
+            toml::from_str("[cursor]\ntheme = \"Adwaita\"\nsize = 32\n").unwrap();
+        assert_eq!(raw.cursor.theme.as_deref(), Some("Adwaita"));
+        assert_eq!(raw.cursor.size, Some(32));
     }
 
     #[test]

@@ -32,7 +32,11 @@ in
       absolute `{ x, y }`. An output not listed here is auto-placed to the
       right of the others, matching the compositor's previous behavior.
       Gaussian background blur for translucent application windows is under
-      `blur`, with `enabled` (default false) and `radius` (default 12). And
+      `blur`, with `enabled` (default false) and `radius` (default 12). The
+      mouse cursor theme is under `cursor`: `theme` (an installed Xcursor
+      theme name) and `size` (in pixels); leaving either unset falls back to
+      the `XCURSOR_THEME`/`XCURSOR_SIZE` environment variables, or the
+      compositor's own built-in cursor if those aren't set either. And
       virtual desktops under `workspaces`: `mode` is `"per_monitor"`
       (default, each output has its own set) or `"combined"` (every output
       switches together); `count` is the starting number of workspaces
