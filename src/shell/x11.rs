@@ -176,7 +176,7 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
     }
 
     fn fullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        if let Some(elem) = self
+        let fullscreened = if let Some(elem) = self
             .space
             .elements()
             .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
@@ -200,11 +200,17 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
                 .unwrap()
                 .set(elem.clone());
             trace!("Fullscreening: {:?}", elem);
+            true
+        } else {
+            false
+        };
+        if fullscreened {
+            crate::foreign_toplevel::sync(self);
         }
     }
 
     fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        if let Some(elem) = self
+        let unfullscreened = if let Some(elem) = self
             .space
             .elements()
             .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
@@ -222,7 +228,15 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
                 output.user_data().get::<FullscreenSurface>().unwrap().clear();
                 window.configure(self.space.element_bbox(elem)).unwrap();
                 self.backend_data.reset_buffers(output);
+                true
+            } else {
+                false
             }
+        } else {
+            false
+        };
+        if unfullscreened {
+            crate::foreign_toplevel::sync(self);
         }
     }
 

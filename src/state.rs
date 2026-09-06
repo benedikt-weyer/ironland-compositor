@@ -162,6 +162,7 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     pub foreign_toplevel_manager_state: crate::foreign_toplevel::ForeignToplevelManagerState,
     pub shortcuts_manager_state: crate::shortcuts::ShortcutsManagerState,
     pub focus_grab_manager_state: crate::focus_grab::FocusGrabManagerState,
+    pub workspace_windows_state: crate::workspace_windows::WorkspaceWindowsState,
     pub output_manager_state: OutputManagerState,
     pub primary_selection_state: PrimarySelectionState,
     pub data_control_state: DataControlState,
@@ -315,6 +316,23 @@ impl<BackendData: Backend> crate::shortcuts::ShortcutsHandler for AnvilState<Bac
 impl<BackendData: Backend> crate::focus_grab::FocusGrabHandler for AnvilState<BackendData> {
     fn focus_grab_state(&mut self) -> &mut crate::focus_grab::FocusGrabManagerState {
         &mut self.focus_grab_manager_state
+    }
+}
+
+impl<BackendData: Backend> crate::workspace_windows::WorkspaceWindowsHandler for AnvilState<BackendData> {
+    fn workspace_windows_state(&mut self) -> &mut crate::workspace_windows::WorkspaceWindowsState {
+        &mut self.workspace_windows_state
+    }
+
+    fn windows_by_workspace(&self) -> Vec<(String, usize, String, String)> {
+        crate::shell::workspace::all_windows(self)
+            .into_iter()
+            .filter_map(|window| {
+                let (output, idx) = crate::shell::workspace::window_home(&window)?;
+                let (title, app_id) = crate::foreign_toplevel::title_and_app_id(&window.0);
+                Some((output.name(), idx, title, app_id))
+            })
+            .collect()
     }
 }
 
@@ -789,6 +807,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             crate::foreign_toplevel::ForeignToplevelManagerState::new::<Self>(&dh);
         let shortcuts_manager_state = crate::shortcuts::ShortcutsManagerState::new::<Self>(&dh);
         let focus_grab_manager_state = crate::focus_grab::FocusGrabManagerState::new::<Self>(&dh);
+        let workspace_windows_state = crate::workspace_windows::WorkspaceWindowsState::new::<Self>(&dh);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
         let data_control_state =
@@ -860,6 +879,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             foreign_toplevel_manager_state,
             shortcuts_manager_state,
             focus_grab_manager_state,
+            workspace_windows_state,
             output_manager_state,
             primary_selection_state,
             data_control_state,

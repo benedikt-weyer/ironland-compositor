@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="ironland_workspace_windows_v1">
+  <copyright>
+    Copyright © 2026 the ironland-copositor contributors
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the
+    "Software"), to deal in the Software without restriction, including
+    without limitation the rights to use, copy, modify, merge, publish,
+    distribute, sublicense, and/or sell copies of the Software, and to
+    permit persons to whom the Software is furnished to do so, subject to
+    the following conditions:
+
+    The above copyright notice and this permission notice shall be included
+    in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+    IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+    TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+    SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="which window is on which workspace">
+    Neither `ext-workspace-v1` nor `wlr-foreign-toplevel-management-v1` links
+    a window to a workspace - the former only knows workspaces, the latter
+    only windows. This protocol fills that one gap: it reports, for every
+    window, which output and workspace index (matching the `index` field
+    ironland-workspaces already reports over `ext-workspace-v1`) it's homed
+    to, identified by title and app id since neither existing protocol
+    exposes a stable id a client could match on instead. Best-effort by
+    construction: two windows with the same title and app id on the same
+    workspace are indistinguishable to a client of this protocol.
+
+    A client is expected to clear its accumulated state and rebuild it from
+    the `window` events it receives up to the next `done`, the same
+    snapshot-per-`done` pattern `ext-workspace-v1` itself uses.
+  </description>
+
+  <interface name="ironland_workspace_windows_v1" version="1">
+    <request name="destroy" type="destructor">
+      <description summary="stop listening"/>
+    </request>
+
+    <event name="window">
+      <description summary="one window's current workspace"/>
+      <arg name="output" type="string" summary="the wl_output name (e.g. eDP-1) it's on"/>
+      <arg name="workspace" type="uint" summary="workspace index on that output, matching ext-workspace-v1"/>
+      <arg name="title" type="string"/>
+      <arg name="app_id" type="string"/>
+    </event>
+
+    <event name="done">
+      <description summary="end of the current snapshot">
+        Sent once after every `window` event for the current state has been
+        sent, and again whenever anything changes (a window maps/unmaps,
+        moves workspace, or its title/app id changes).
+      </description>
+    </event>
+  </interface>
+</protocol>

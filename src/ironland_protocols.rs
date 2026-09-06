@@ -1,7 +1,7 @@
 //! Server-side generated bindings for ironland-copositor's own small
-//! Wayland protocol extensions (XML under `protocols/`): named shortcuts
-//! and single-surface focus grabs (see `crate::shortcuts` and
-//! `crate::focus_grab`).
+//! Wayland protocol extensions (XML under `protocols/`): named shortcuts,
+//! single-surface focus grabs, and per-window workspace membership (see
+//! `crate::shortcuts`, `crate::focus_grab`, and `crate::workspace_windows`).
 //!
 //! These aren't in the `wayland-protocols`/`wayland-protocols-wlr` crates
 //! (nothing standard covers either need, and Hyprland's own equivalents -
@@ -50,4 +50,17 @@ pub mod focus_grab {
     use self::__interfaces::*;
 
     wayland_scanner::generate_server_code!("./protocols/ironland-focus-grab-v1.xml");
+}
+
+pub mod workspace_windows {
+    use wayland_server;
+    use wayland_server::protocol::*;
+
+    pub mod __interfaces {
+        use wayland_server::protocol::__interfaces::*;
+        wayland_scanner::generate_interfaces!("./protocols/ironland-workspace-windows-v1.xml");
+    }
+    use self::__interfaces::*;
+
+    wayland_scanner::generate_server_code!("./protocols/ironland-workspace-windows-v1.xml");
 }

@@ -155,7 +155,8 @@ where
         + Dispatch<ExtWorkspaceManagerV1, ManagerToken>
         + Dispatch<ExtWorkspaceGroupHandleV1, GroupData>
         + Dispatch<ExtWorkspaceHandleV1, WorkspaceData>
-        + AsOutputsAndDisplay,
+        + AsOutputsAndDisplay
+        + crate::workspace_windows::WorkspaceWindowsHandler,
 {
     let dh = state.display_handle();
     let outputs = state.workspace_outputs();
@@ -168,6 +169,13 @@ where
         sync_instance::<D>(&dh, &client, instance, &outputs);
         instance.manager.done();
     }
+
+    // A workspace switch or a window moving workspace doesn't necessarily
+    // touch any window's title/app id, so `foreign_toplevel::sync_with_focus`
+    // won't always run alongside this - piggyback the workspace-windows
+    // snapshot here too rather than threading a separate call through every
+    // caller of this function.
+    crate::workspace_windows::sync(state);
 }
 
 /// Brings one client's groups/workspaces in line with the current

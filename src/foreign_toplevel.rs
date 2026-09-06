@@ -146,7 +146,7 @@ pub struct ToplevelData {
 /// Title and app id for `window`, read straight from its role data (or, for
 /// an X11 window, its WM_NAME/WM_CLASS) - never cached, since [`sync`] only
 /// runs at discrete change points anyway.
-fn title_and_app_id(window: &Window) -> (String, String) {
+pub(crate) fn title_and_app_id(window: &Window) -> (String, String) {
     match window.underlying_surface() {
         WindowSurface::Wayland(toplevel) => compositor::with_states(toplevel.wl_surface(), |states| {
             let attrs = states.data_map.get::<XdgToplevelSurfaceData>().unwrap().lock().unwrap();
@@ -165,7 +165,8 @@ where
     D: ForeignToplevelHandler
         + Dispatch<ZwlrForeignToplevelManagerV1, ManagerToken>
         + Dispatch<ZwlrForeignToplevelHandleV1, ToplevelData>
-        + AsWindowsFocusAndDisplay,
+        + AsWindowsFocusAndDisplay
+        + crate::workspace_windows::WorkspaceWindowsHandler,
 {
     let focused = state.focused_window();
     sync_with_focus(state, focused.as_ref());
@@ -180,18 +181,26 @@ where
     D: ForeignToplevelHandler
         + Dispatch<ZwlrForeignToplevelManagerV1, ManagerToken>
         + Dispatch<ZwlrForeignToplevelHandleV1, ToplevelData>
-        + AsWindowsFocusAndDisplay,
+        + AsWindowsFocusAndDisplay
+        + crate::workspace_windows::WorkspaceWindowsHandler,
 {
     let dh = state.display_handle();
     let windows = state.all_windows();
+    let fullscreen = state.fullscreen_windows();
     let proto = state.foreign_toplevel_state();
 
     for instance in &mut proto.instances {
         let Ok(client) = dh.get_client(instance.manager.id()) else {
             continue;
         };
-        sync_instance::<D>(&dh, &client, instance, &windows, focused);
+        sync_instance::<D>(&dh, &client, instance, &windows, focused, &fullscreen);
     }
+
+    // Titles/app ids can change independently of focus, and this is the
+    // only hook that reliably fires on every such change (see this
+    // function's callers) - piggyback the workspace-windows snapshot here
+    // too rather than threading a separate call through all of them.
+    crate::workspace_windows::sync(state);
 }
 
 /// Brings one client's handles in line with the current window list:
@@ -203,6 +212,7 @@ fn sync_instance<D>(
     instance: &mut Instance,
     windows: &[WindowElement],
     focused: Option<&WindowElement>,
+    fullscreen: &[WindowElement],
 ) where
     D: ForeignToplevelHandler
         + Dispatch<ZwlrForeignToplevelManagerV1, ManagerToken>
@@ -245,6 +255,9 @@ fn sync_instance<D>(
         if focused == Some(window) {
             states.extend_from_slice(&(zwlr_foreign_toplevel_handle_v1::State::Activated as u32).to_ne_bytes());
         }
+        if fullscreen.contains(window) {
+            states.extend_from_slice(&(zwlr_foreign_toplevel_handle_v1::State::Fullscreen as u32).to_ne_bytes());
+        }
         entry.resource.state(states);
         entry.resource.done();
     }
@@ -259,6 +272,10 @@ pub trait AsWindowsFocusAndDisplay {
     fn all_windows(&self) -> Vec<WindowElement>;
     /// The window currently holding keyboard focus, if any.
     fn focused_window(&self) -> Option<WindowElement>;
+    /// Every window that is some output's fullscreen surface right now (see
+    /// `crate::shell::FullscreenSurface`) - at most one per output, but
+    /// returned flattened since callers only ever need to test membership.
+    fn fullscreen_windows(&self) -> Vec<WindowElement>;
 }
 
 impl<B: Backend> AsWindowsFocusAndDisplay for AnvilState<B> {
@@ -272,6 +289,13 @@ impl<B: Backend> AsWindowsFocusAndDisplay for AnvilState<B> {
 
     fn focused_window(&self) -> Option<WindowElement> {
         crate::shell::tiling::current_focused_window(self)
+    }
+
+    fn fullscreen_windows(&self) -> Vec<WindowElement> {
+        self.space
+            .outputs()
+            .filter_map(|o| o.user_data().get::<crate::shell::FullscreenSurface>()?.get())
+            .collect()
     }
 }
 
@@ -297,7 +321,8 @@ where
         };
         let windows = state.all_windows();
         let focused = state.focused_window();
-        sync_instance::<D>(dh, client, &mut instance, &windows, focused.as_ref());
+        let fullscreen = state.fullscreen_windows();
+        sync_instance::<D>(dh, client, &mut instance, &windows, focused.as_ref(), &fullscreen);
         state.foreign_toplevel_state().instances.push(instance);
     }
 }

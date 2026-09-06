@@ -34,5 +34,6 @@ pub mod winit;
 pub mod x11;
 pub mod ext_workspace;
 pub mod shortcuts;
+pub mod workspace_windows;
 
 pub use state::{AnvilState, ClientState};

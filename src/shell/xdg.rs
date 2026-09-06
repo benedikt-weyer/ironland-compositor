@@ -326,6 +326,7 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
                 .unwrap()
                 .set(window.clone());
             trace!("Fullscreening: {:?}", window);
+            crate::foreign_toplevel::sync(self);
         }
 
         // The protocol demands us to always reply with a configure,
@@ -349,6 +350,7 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
                 trace!("Unfullscreening: {:?}", fullscreen.get());
                 fullscreen.clear();
                 self.backend_data.reset_buffers(&output);
+                crate::foreign_toplevel::sync(self);
             }
         }
 
