@@ -79,6 +79,14 @@
         packages.default = craneLib.buildPackage (commonArgs // {
           src = craneLib.path ./.;
           inherit cargoArtifacts;
+          nativeBuildInputs = nativeBuildInputs ++ [ pkgs.makeWrapper ];
+          # `smithay::xwayland::XWayland::spawn` shells out to `Xwayland` by
+          # bare name (`Command::new("Xwayland")`, resolved via `PATH`) -
+          # there's no Cargo-level way to point it at a store path, so the
+          # binary itself needs Xwayland on its PATH instead.
+          postFixup = ''
+            wrapProgram $out/bin/ironland-copositor --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xwayland ]}
+          '';
         });
 
         packages.settings-gui = pkgs.buildGoModule {
@@ -88,12 +96,14 @@
           vendorHash = "sha256-IhRYaTLleaHKfqmicA8rYOdiEW41J7CxLIWKld4Ez0Q=";
           nativeBuildInputs = [ pkgs.pkg-config pkgs.makeWrapper ];
           buildInputs = guiSettingsBuildInputs;
-          # The compositor has no XWayland, so Fyne's default glfw backend
-          # (X11-only unless told otherwise) can't create a window at all -
-          # it fails with "x11: DISPLAY is missing" even when run from a
-          # terminal inside the Wayland session, since it never looks at
-          # WAYLAND_DISPLAY. This tag switches go-gl/glfw to its native
-          # Wayland backend instead.
+          # Fyne's default glfw backend is X11-only unless told otherwise,
+          # and it never looks at WAYLAND_DISPLAY, so without this tag it
+          # fails with "x11: DISPLAY is missing" even run from a terminal
+          # inside the Wayland session (XWayland now runs, but DISPLAY is
+          # only set for clients the compositor itself launches - see
+          # `apply_envs` in `src/launcher.rs` - not for this settings-gui,
+          # which is meant to work regardless of how it's started). This tag
+          # switches go-gl/glfw to its native Wayland backend instead.
           tags = [ "wayland" ];
           # The appearance tab's dark-mode toggle shells out to `gsettings`
           # (see gui-settings/appearance.go) rather than linking against
@@ -140,10 +150,10 @@
           shellHook = ''
             export __EGL_EXTERNAL_PLATFORM_CONFIG_DIRS="/run/opengl-driver/share/egl/egl_external_platform.d''${__EGL_EXTERNAL_PLATFORM_CONFIG_DIRS:+:$__EGL_EXTERNAL_PLATFORM_CONFIG_DIRS}"
           '';
-          # See the `tags` comment on packages.settings-gui: the compositor
-          # has no XWayland, so this always needs glfw's native-Wayland
-          # backend. GOFLAGS applies the tag to `go build`/`go run`/`go
-          # test` here without having to remember `-tags wayland` each time.
+          # See the `tags` comment on packages.settings-gui: this always
+          # needs glfw's native-Wayland backend. GOFLAGS applies the tag to
+          # `go build`/`go run`/`go test` here without having to remember
+          # `-tags wayland` each time.
           GOFLAGS = "-tags=wayland";
         };
       })) // {
