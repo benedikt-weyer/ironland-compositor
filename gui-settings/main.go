@@ -28,6 +28,7 @@ func main() {
 	shortcutsTab := buildShortcutsTab(&cfg)
 	outputsTab := buildOutputsTab(&cfg, w)
 	workspacesTab := buildWorkspacesTab(&cfg)
+	focusTab := buildFocusTab(&cfg)
 	appearanceTab := buildAppearanceTab(&cfg, w)
 
 	status := widget.NewLabel(statusText(loadedFrom))
@@ -48,6 +49,7 @@ func main() {
 		container.NewTabItem("Shortcuts", shortcutsTab),
 		container.NewTabItem("Monitors", outputsTab),
 		container.NewTabItem("Workspaces", workspacesTab),
+		container.NewTabItem("Focus", focusTab),
 		container.NewTabItem("Appearance", appearanceTab),
 	)
 
@@ -366,6 +368,47 @@ func buildWorkspacesTab(cfg *Config) fyne.CanvasObject {
 			" with Super+Alt+Left/Right (both rebindable in the Shortcuts tab). With \"Dynamic count\" on," +
 			" navigating or moving a window past the last workspace creates a new one, and empty trailing" +
 			" workspaces are dropped again automatically; otherwise the count above is fixed.",
+	)
+	hint.Wrapping = fyne.TextWrapWord
+
+	return resets.page(container.NewVBox(form, hint))
+}
+
+// defaultFocusSettings mirrors config::FocusSettings' Default impl: both off,
+// matching click-to-focus behavior from before either setting existed.
+func defaultFocusSettings() FocusSettings {
+	return FocusSettings{}
+}
+
+// buildFocusTab lays out the two focus-follows-mouse/mouse-follows-focus
+// toggles.
+func buildFocusTab(cfg *Config) fyne.CanvasObject {
+	defaults := defaultFocusSettings()
+	resets := newResetGroup()
+
+	followsMouse := widget.NewCheck("Focus follows mouse", func(checked bool) {
+		cfg.Focus.FollowsMouse = checked
+		resets.refresh()
+	})
+	followsMouse.SetChecked(cfg.Focus.FollowsMouse)
+
+	mouseFollowsFocus := widget.NewCheck("Mouse follows focus", func(checked bool) {
+		cfg.Focus.MouseFollowsFocus = checked
+		resets.refresh()
+	})
+	mouseFollowsFocus.SetChecked(cfg.Focus.MouseFollowsFocus)
+
+	form := widget.NewForm(
+		widget.NewFormItem("", resets.item(followsMouse, func() bool { return cfg.Focus.FollowsMouse != defaults.FollowsMouse }, func() { followsMouse.SetChecked(defaults.FollowsMouse) })),
+		widget.NewFormItem("", resets.item(mouseFollowsFocus, func() bool { return cfg.Focus.MouseFollowsFocus != defaults.MouseFollowsFocus }, func() { mouseFollowsFocus.SetChecked(defaults.MouseFollowsFocus) })),
+	)
+
+	hint := widget.NewLabel(
+		"\"Focus follows mouse\" focuses whatever window the pointer is over without needing a click" +
+			" (hovering empty space leaves the current focus alone). \"Mouse follows focus\" warps the" +
+			" pointer to the center of a window whenever it's focused some other way - switching" +
+			" workspaces, cycling windows (Alt+Tab-style bindings), a newly opened window, or activating" +
+			" a window from the dock.",
 	)
 	hint.Wrapping = fyne.TextWrapWord
 

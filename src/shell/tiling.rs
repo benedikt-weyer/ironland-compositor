@@ -8,7 +8,9 @@
 use std::cell::{Ref, RefCell, RefMut};
 
 use smithay::{
+    backend::input::InputTime,
     desktop::{Space, layer_map_for_output},
+    input::pointer::MotionEvent,
     output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{IsAlive, Logical, Point, Rectangle, SERIAL_COUNTER},
@@ -431,6 +433,39 @@ pub(crate) fn raise_and_focus<BackendData: Backend>(state: &mut AnvilState<Backe
         let serial = SERIAL_COUNTER.next_serial();
         keyboard.set_focus(state, Some(window.clone().into()), serial);
     }
+    warp_pointer_to(state, window);
+}
+
+/// Moves the pointer to the center of `window`, if `focus.mouse_follows_focus`
+/// is enabled. Every caller of [`raise_and_focus`] is a focus change that
+/// didn't originate from the pointer itself (a workspace switch, cycling
+/// windows, a newly mapped window taking focus, activating a window from the
+/// dock) - `focus.follows_mouse` only ever runs from real pointer-motion
+/// input events (see `input_handler.rs`), so the two settings can't end up
+/// fighting each other through this.
+fn warp_pointer_to<BackendData: Backend>(state: &mut AnvilState<BackendData>, window: &WindowElement) {
+    if !state.config.focus.mouse_follows_focus {
+        return;
+    }
+    let Some(geo) = state.space.element_geometry(window) else {
+        return;
+    };
+    let center = Point::<i32, Logical>::from((geo.loc.x + geo.size.w / 2, geo.loc.y + geo.size.h / 2))
+        .to_f64();
+
+    let pointer = state.pointer.clone();
+    pointer.set_location(center);
+    let under = state.surface_under(center);
+    pointer.motion(
+        state,
+        under,
+        &MotionEvent {
+            location: center,
+            serial: SERIAL_COUNTER.next_serial(),
+            time: InputTime::now(),
+        },
+    );
+    pointer.frame(state);
 }
 
 /// Re-flow every tiled window on `output`'s *active* workspace to match its

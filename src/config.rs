@@ -237,6 +237,22 @@ impl Default for BlurSettings {
     }
 }
 
+/// Pointer/keyboard-focus interaction. Both default off, matching the
+/// click-to-focus behavior this compositor had before either existed.
+#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
+#[serde(default)]
+pub struct FocusSettings {
+    /// If true, moving the pointer over a window focuses it, without
+    /// needing a click. Hovering empty space (no window under the
+    /// pointer) leaves the current focus alone rather than clearing it.
+    pub follows_mouse: bool,
+    /// If true, a focus change that didn't come from the pointer itself
+    /// (switching workspaces, cycling windows, a newly mapped window
+    /// taking focus, activating a window from the dock) warps the pointer
+    /// to the center of the newly focused window.
+    pub mouse_follows_focus: bool,
+}
+
 impl Default for WorkspaceSettings {
     fn default() -> Self {
         WorkspaceSettings {
@@ -270,6 +286,7 @@ struct RawConfig {
     wallpaper: Option<String>,
     blur: BlurSettings,
     cursor: CursorSettings,
+    focus: FocusSettings,
     shortcuts: HashMap<String, Vec<String>>,
     outputs: HashMap<String, OutputSettings>,
     workspaces: WorkspaceSettings,
@@ -298,6 +315,8 @@ pub struct Config {
     pub blur: BlurSettings,
     /// Mouse cursor theme/size (see [`CursorSettings`]).
     pub cursor: CursorSettings,
+    /// Pointer/keyboard-focus interaction (see [`FocusSettings`]).
+    pub focus: FocusSettings,
     /// action name -> key combos, e.g. `"toggle_launcher" -> ["ctrl+space"]`.
     /// Always fully populated: entries not overridden by the config file
     /// keep their built-in default.
@@ -321,6 +340,7 @@ impl Default for Config {
             wallpaper: None,
             blur: BlurSettings::default(),
             cursor: CursorSettings::default(),
+            focus: FocusSettings::default(),
             shortcuts: default_shortcuts(),
             outputs: HashMap::new(),
             workspaces: WorkspaceSettings::default(),
@@ -503,6 +523,7 @@ impl Config {
                     wallpaper: raw.wallpaper,
                     blur: raw.blur,
                     cursor: raw.cursor,
+                    focus: raw.focus,
                     shortcuts,
                     outputs: raw.outputs,
                     workspaces: raw.workspaces,
@@ -741,6 +762,7 @@ mod tests {
             wallpaper: None,
             blur: BlurSettings::default(),
             cursor: CursorSettings::default(),
+            focus: FocusSettings::default(),
             shortcuts,
             outputs: HashMap::new(),
             workspaces: WorkspaceSettings::default(),
@@ -934,6 +956,19 @@ mod tests {
             toml::from_str("[cursor]\ntheme = \"Adwaita\"\nsize = 32\n").unwrap();
         assert_eq!(raw.cursor.theme.as_deref(), Some("Adwaita"));
         assert_eq!(raw.cursor.size, Some(32));
+    }
+
+    #[test]
+    fn focus_settings_default_off_and_parse() {
+        let raw: RawConfig = toml::from_str("").unwrap();
+        assert_eq!(raw.focus, FocusSettings::default());
+        assert!(!raw.focus.follows_mouse);
+        assert!(!raw.focus.mouse_follows_focus);
+
+        let raw: RawConfig =
+            toml::from_str("[focus]\nfollows_mouse = true\nmouse_follows_focus = true\n").unwrap();
+        assert!(raw.focus.follows_mouse);
+        assert!(raw.focus.mouse_follows_focus);
     }
 
     #[test]

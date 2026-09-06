@@ -47,7 +47,15 @@ in
       workspaces with Super+Left/Right and move the focused window to an
       adjacent one with Super+Alt+Left/Right (both rebindable in
       `shortcuts` as `workspace_left`/`workspace_right` and
-      `move_workspace_left`/`move_workspace_right`).
+      `move_workspace_left`/`move_workspace_right`). Pointer/keyboard-focus
+      interaction is under `focus`, both off by default (click-to-focus,
+      unchanged from before either existed): `follows_mouse`, if true,
+      focuses whatever window the pointer is over without needing a click
+      (hovering empty space leaves the current focus alone); and
+      `mouse_follows_focus`, if true, warps the pointer to the center of a
+      window whenever it's focused by something other than the pointer
+      itself (switching workspaces, cycling windows, a newly opened window,
+      activating a window from the dock).
     '';
     example = lib.literalExpression ''
       {

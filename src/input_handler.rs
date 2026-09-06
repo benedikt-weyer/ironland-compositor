@@ -1219,6 +1219,10 @@ impl AnvilState<UdevData> {
 
         pointer_location += delta;
 
+        if self.config.focus.follows_mouse {
+            self.update_keyboard_focus(pointer_location, SCOUNTER.next_serial());
+        }
+
         let new_under = self.surface_under(pointer_location);
 
         // If confined, don't move pointer if it would go outside surface
@@ -1287,6 +1291,10 @@ impl AnvilState<UdevData> {
 
         // clamp to screen limits
         pointer_location = self.clamp_coords(pointer_location);
+
+        if self.config.focus.follows_mouse {
+            self.update_keyboard_focus(pointer_location, SCOUNTER.next_serial());
+        }
 
         let pointer = self.pointer.clone();
         let under = self.surface_under(pointer_location);

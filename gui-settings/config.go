@@ -54,6 +54,21 @@ type WorkspaceSettings struct {
 	Overlay bool   `toml:"overlay"`
 }
 
+// FocusSettings mirrors `config::FocusSettings` in the compositor: both
+// default off, matching the click-to-focus behavior from before either
+// existed.
+type FocusSettings struct {
+	// FollowsMouse, if true, focuses whatever window the pointer is over
+	// without needing a click (hovering empty space leaves the current
+	// focus alone).
+	FollowsMouse bool `toml:"follows_mouse"`
+	// MouseFollowsFocus, if true, warps the pointer to the center of a
+	// window whenever it's focused by something other than the pointer
+	// itself (switching workspaces, cycling windows, a newly opened
+	// window, activating a window from the dock).
+	MouseFollowsFocus bool `toml:"mouse_follows_focus"`
+}
+
 // Config mirrors `config::Config` / `config::RawConfig` in the compositor,
 // plus the GUI-only Appearance settings above.
 type Config struct {
@@ -71,6 +86,7 @@ type Config struct {
 	Wallpaper  string                    `toml:"wallpaper,omitempty"`
 	Blur       BlurSettings              `toml:"blur"`
 	Cursor     CursorSettings            `toml:"cursor"`
+	Focus      FocusSettings             `toml:"focus"`
 	Appearance AppearanceSettings        `toml:"appearance"`
 	Shortcuts  map[string][]string       `toml:"shortcuts"`
 	Outputs    map[string]OutputSettings `toml:"outputs"`
@@ -296,6 +312,7 @@ func loadConfig() (Config, string) {
 			cfg.Blur.Radius = raw.Blur.Radius
 		}
 		cfg.Cursor = raw.Cursor
+		cfg.Focus = raw.Focus
 		cfg.Appearance = raw.Appearance
 		cfg.Keyboard = raw.Keyboard
 		for action, keys := range raw.Shortcuts {
