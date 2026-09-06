@@ -29,14 +29,15 @@
 //! distinct from "on another workspace"), so a client is free to ask, it
 //! just won't see the corresponding `state` bit ever come back set.
 //!
-//! Two known gaps, both mirroring the ones already documented on
-//! `ext_workspace`: `output_enter`/`output_leave` are never sent (a client
-//! won't know which output a toplevel is on), and the `parent` event (v3)
-//! is never sent (ironland-copositor doesn't track toplevel parenting).
-//! Neither is required by the protocol - both are simply never emitted.
+//! One known gap, mirroring one already documented on `ext_workspace`: the
+//! `parent` event (v3) is never sent (ironland-copositor doesn't track
+//! toplevel parenting) - not required by the protocol, simply never
+//! emitted. `output_enter`/`output_leave` *are* sent (see [`sync_instance`]),
+//! since the shell needs them to know which monitor a window is on.
 
 use smithay::{
     desktop::{Window, WindowSurface},
+    output::Output,
     reexports::{
         wayland_protocols_wlr::foreign_toplevel::v1::server::{
             zwlr_foreign_toplevel_handle_v1::{self, ZwlrForeignToplevelHandleV1},
@@ -90,6 +91,10 @@ impl<B: Backend> ForeignToplevelHandler for AnvilState<B> {
 struct ToplevelEntry {
     window: WindowElement,
     resource: ZwlrForeignToplevelHandleV1,
+    /// Outputs this handle has already sent `output_enter` for (and not yet
+    /// `output_leave`), so [`sync_instance`] can diff against the window's
+    /// current outputs instead of re-entering/leaving redundantly.
+    known_outputs: Vec<Output>,
 }
 
 /// One client's binding of the `zwlr_foreign_toplevel_manager_v1` global,
@@ -187,13 +192,17 @@ where
     let dh = state.display_handle();
     let windows = state.all_windows();
     let fullscreen = state.fullscreen_windows();
+    let window_outputs: Vec<(WindowElement, Vec<Output>)> = windows
+        .iter()
+        .map(|w| (w.clone(), state.window_outputs(w)))
+        .collect();
     let proto = state.foreign_toplevel_state();
 
     for instance in &mut proto.instances {
         let Ok(client) = dh.get_client(instance.manager.id()) else {
             continue;
         };
-        sync_instance::<D>(&dh, &client, instance, &windows, focused, &fullscreen);
+        sync_instance::<D>(&dh, &client, instance, &windows, focused, &fullscreen, &window_outputs);
     }
 
     // Titles/app ids can change independently of focus, and this is the
@@ -213,6 +222,7 @@ fn sync_instance<D>(
     windows: &[WindowElement],
     focused: Option<&WindowElement>,
     fullscreen: &[WindowElement],
+    window_outputs: &[(WindowElement, Vec<Output>)],
 ) where
     D: ForeignToplevelHandler
         + Dispatch<ZwlrForeignToplevelManagerV1, ManagerToken>
@@ -242,6 +252,7 @@ fn sync_instance<D>(
                 instance.toplevels.push(ToplevelEntry {
                     window: window.clone(),
                     resource,
+                    known_outputs: Vec::new(),
                 });
                 instance.toplevels.last_mut().unwrap()
             }
@@ -250,6 +261,29 @@ fn sync_instance<D>(
         let (title, app_id) = title_and_app_id(&window.0);
         entry.resource.title(title);
         entry.resource.app_id(app_id);
+
+        let current_outputs = window_outputs
+            .iter()
+            .find(|(w, _)| w == window)
+            .map(|(_, outputs)| outputs.as_slice())
+            .unwrap_or_default();
+        entry.known_outputs.retain(|known| {
+            let still_on_it = current_outputs.contains(known);
+            if !still_on_it {
+                for wl_output in known.client_outputs(client) {
+                    entry.resource.output_leave(&wl_output);
+                }
+            }
+            still_on_it
+        });
+        for output in current_outputs {
+            if !entry.known_outputs.contains(output) {
+                for wl_output in output.client_outputs(client) {
+                    entry.resource.output_enter(&wl_output);
+                }
+                entry.known_outputs.push(output.clone());
+            }
+        }
 
         let mut states = Vec::new();
         if focused == Some(window) {
@@ -276,6 +310,8 @@ pub trait AsWindowsFocusAndDisplay {
     /// `crate::shell::FullscreenSurface`) - at most one per output, but
     /// returned flattened since callers only ever need to test membership.
     fn fullscreen_windows(&self) -> Vec<WindowElement>;
+    /// Every output `window` currently overlaps.
+    fn window_outputs(&self, window: &WindowElement) -> Vec<Output>;
 }
 
 impl<B: Backend> AsWindowsFocusAndDisplay for AnvilState<B> {
@@ -296,6 +332,10 @@ impl<B: Backend> AsWindowsFocusAndDisplay for AnvilState<B> {
             .outputs()
             .filter_map(|o| o.user_data().get::<crate::shell::FullscreenSurface>()?.get())
             .collect()
+    }
+
+    fn window_outputs(&self, window: &WindowElement) -> Vec<Output> {
+        self.space.outputs_for_element(window)
     }
 }
 
@@ -322,7 +362,19 @@ where
         let windows = state.all_windows();
         let focused = state.focused_window();
         let fullscreen = state.fullscreen_windows();
-        sync_instance::<D>(dh, client, &mut instance, &windows, focused.as_ref(), &fullscreen);
+        let window_outputs: Vec<(WindowElement, Vec<Output>)> = windows
+            .iter()
+            .map(|w| (w.clone(), state.window_outputs(w)))
+            .collect();
+        sync_instance::<D>(
+            dh,
+            client,
+            &mut instance,
+            &windows,
+            focused.as_ref(),
+            &fullscreen,
+            &window_outputs,
+        );
         state.foreign_toplevel_state().instances.push(instance);
     }
 }
