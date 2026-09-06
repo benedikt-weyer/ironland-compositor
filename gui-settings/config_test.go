@@ -27,6 +27,7 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 	cfg.FileManager = "nautilus"
 	cfg.TopBar = true
 	cfg.Appearance.DarkMode = true
+	cfg.Blur = BlurSettings{Enabled: true, Radius: 20}
 	cfg.Shortcuts["quit"] = []string{"ctrl+alt+q"}
 	cfg.Outputs["DP-1"] = OutputSettings{RefreshRate: 144_000}
 
@@ -59,6 +60,9 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 	}
 	if !loaded.Appearance.DarkMode {
 		t.Fatalf("loadConfig appearance.darkMode = %v, want true", loaded.Appearance.DarkMode)
+	}
+	if !loaded.Blur.Enabled || loaded.Blur.Radius != 20 {
+		t.Fatalf("loadConfig blur = %+v, want enabled radius 20", loaded.Blur)
 	}
 	if !reflect.DeepEqual(loaded.Shortcuts["quit"], []string{"ctrl+alt+q"}) {
 		t.Fatalf("loadConfig shortcuts[quit] = %v", loaded.Shortcuts["quit"])

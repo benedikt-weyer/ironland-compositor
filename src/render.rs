@@ -4,7 +4,7 @@ use smithay::{
         damage::{Error as OutputDamageTrackerError, OutputDamageTracker, RenderOutputResult},
         element::{
             AsRenderElements, RenderElement, Wrap,
-            memory::MemoryRenderBufferRenderElement,
+            memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
             surface::WaylandSurfaceRenderElement,
             utils::{
                 ConstrainAlign, ConstrainScaleBehavior, CropRenderElement, RelocateRenderElement,
@@ -35,6 +35,7 @@ smithay::backend::renderer::element::render_elements! {
     // (the launcher and the workspace-switcher dots): they're all just a
     // `MemoryRenderBuffer` placed at some location, so one variant covers them.
     Overlay=MemoryRenderBufferRenderElement<R>,
+    Blur=CropRenderElement<MemoryRenderBufferRenderElement<R>>,
     #[cfg(feature = "debug")]
     // Note: We would like to borrow this element instead, but that would introduce
     // a feature-dependent lifetime, which introduces a lot more feature bounds
@@ -49,6 +50,7 @@ impl<R: Renderer> std::fmt::Debug for CustomRenderElements<R> {
             Self::Pointer(arg0) => f.debug_tuple("Pointer").field(arg0).finish(),
             Self::Surface(arg0) => f.debug_tuple("Surface").field(arg0).finish(),
             Self::Overlay(arg0) => f.debug_tuple("Overlay").field(arg0).finish(),
+            Self::Blur(arg0) => f.debug_tuple("Blur").field(arg0).finish(),
             #[cfg(feature = "debug")]
             Self::Fps(arg0) => f.debug_tuple("Fps").field(arg0).finish(),
             Self::_GenericCatcher(arg0) => f.debug_tuple("_GenericCatcher").field(arg0).finish(),
@@ -85,7 +87,7 @@ pub fn space_preview_elements<'a, R, C>(
 ) -> impl Iterator<Item = C> + 'a
 where
     R: Renderer + ImportAll + ImportMem,
-    R::TextureId: Clone + 'static,
+    R::TextureId: Clone + Send + 'static,
     C: From<CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>>> + 'a,
 {
     let constrain_behavior = ConstrainBehavior {
@@ -147,12 +149,13 @@ pub fn output_elements<R>(
     space: &Space<WindowElement>,
     custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
     background_element: Option<CustomRenderElements<R>>,
+    blurred_background: Option<&MemoryRenderBuffer>,
     renderer: &mut R,
     show_window_preview: bool,
 ) -> (Vec<OutputRenderElements<R, WindowRenderElement<R>>>, Color32F)
 where
     R: Renderer + ImportAll + ImportMem,
-    R::TextureId: Clone + 'static,
+    R::TextureId: Clone + Send + 'static,
 {
     if let Some(window) = output
         .user_data()
@@ -192,6 +195,48 @@ where
         .expect("output without mode?");
         output_render_elements.extend(space_elements.into_iter().map(OutputRenderElements::Space));
 
+        // Place a cropped blurred wallpaper immediately behind each window.
+        // Opaque application pixels cover it completely; alpha-bearing pixels
+        // naturally composite over it and produce the backdrop-blur effect.
+        if let Some(blurred_background) = blurred_background {
+            let output_geometry = space.output_geometry(output).unwrap_or_default();
+            let output_bounds = Rectangle::from_size(output_geometry.size);
+            let output_scale = output.current_scale().fractional_scale();
+            for window in space.elements_for_output(output) {
+                let Some(mut window_rect) = space.element_bbox(window) else {
+                    continue;
+                };
+                window_rect.loc -= output_geometry.loc;
+                let Some(window_rect) = window_rect.intersection(output_bounds) else {
+                    continue;
+                };
+                let crop_rect = window_rect
+                    .to_f64()
+                    .to_physical(output_scale)
+                    .to_i32_round();
+                let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
+                    renderer,
+                    Point::from((0.0, 0.0)),
+                    blurred_background,
+                    None,
+                    None,
+                    None,
+                    smithay::backend::renderer::element::Kind::Unspecified,
+                ) else {
+                    continue;
+                };
+                if let Some(element) = CropRenderElement::from_element(
+                    element,
+                    output_scale,
+                    crop_rect,
+                ) {
+                    output_render_elements.push(OutputRenderElements::from(
+                        CustomRenderElements::Blur(element),
+                    ));
+                }
+            }
+        }
+
         // The wallpaper sits behind every window, so it's appended last:
         // damage-tracked render elements are painted front-to-back, in list
         // order.
@@ -209,6 +254,7 @@ pub fn render_output<'a, 'd, R>(
     space: &'a Space<WindowElement>,
     custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
     background_element: Option<CustomRenderElements<R>>,
+    blurred_background: Option<&MemoryRenderBuffer>,
     renderer: &'a mut R,
     framebuffer: &'a mut R::Framebuffer<'_>,
     damage_tracker: &'d mut OutputDamageTracker,
@@ -217,13 +263,14 @@ pub fn render_output<'a, 'd, R>(
 ) -> Result<RenderOutputResult<'d>, OutputDamageTrackerError<R::Error>>
 where
     R: Renderer + ImportAll + ImportMem,
-    R::TextureId: Clone + 'static,
+    R::TextureId: Clone + Send + 'static,
 {
     let (elements, clear_color) = output_elements(
         output,
         space,
         custom_elements,
         background_element,
+        blurred_background,
         renderer,
         show_window_preview,
     );

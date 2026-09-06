@@ -269,6 +269,12 @@ pub fn run_winit() {
             let scale = Scale::from(output.current_scale().fractional_scale());
             let output_size = state.space.output_geometry(&output).unwrap().size;
             let wallpaper_buffer = state.wallpaper.buffer_for(output_size).clone();
+            let blurred_wallpaper_buffer = state.config.blur.enabled.then(|| {
+                state
+                    .wallpaper
+                    .blurred_buffer_for(output_size, state.config.blur.radius)
+                    .clone()
+            });
             let launcher_buffer = state.launcher.ensure_buffer().cloned();
             let launcher_location = launcher_buffer.as_ref().map(|_| {
                 let output_size = state.space.output_geometry(&output).unwrap().size;
@@ -427,6 +433,7 @@ pub fn run_winit() {
                     space,
                     elements,
                     background_element,
+                    blurred_wallpaper_buffer.as_ref(),
                     renderer,
                     &mut fb,
                     damage_tracker,

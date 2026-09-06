@@ -19,6 +19,7 @@ static DEFAULT_WALLPAPER: &[u8] = include_bytes!("../resources/wallpaper.webp");
 pub struct Wallpaper {
     image: image::RgbaImage,
     cache: Option<(Size<i32, Logical>, MemoryRenderBuffer)>,
+    blur_cache: Option<(Size<i32, Logical>, u32, MemoryRenderBuffer)>,
 }
 
 impl Wallpaper {
@@ -36,7 +37,11 @@ impl Wallpaper {
                 }
             })
             .unwrap_or_else(default_image);
-        Wallpaper { image, cache: None }
+        Wallpaper {
+            image,
+            cache: None,
+            blur_cache: None,
+        }
     }
 
     /// The buffer to render for an output of logical `size`, rebuilding it
@@ -47,6 +52,27 @@ impl Wallpaper {
             self.cache = Some((size, buffer));
         }
         &self.cache.as_ref().expect("just inserted above").1
+    }
+
+    /// A Gaussian-blurred copy of the output-sized wallpaper. This is cached
+    /// independently because it is only needed when backdrop blur is enabled.
+    pub fn blurred_buffer_for(
+        &mut self,
+        size: Size<i32, Logical>,
+        radius: u32,
+    ) -> &MemoryRenderBuffer {
+        let radius = radius.clamp(1, 50);
+        if self
+            .blur_cache
+            .as_ref()
+            .map(|(cached_size, cached_radius, _)| (*cached_size, *cached_radius))
+            != Some((size, radius))
+        {
+            let rasterized = rasterize_image(&self.image, size);
+            let blurred = image::imageops::blur(&rasterized, radius as f32);
+            self.blur_cache = Some((size, radius, buffer_from_image(&blurred)));
+        }
+        &self.blur_cache.as_ref().expect("just inserted above").2
     }
 }
 
@@ -59,6 +85,10 @@ fn default_image() -> image::RgbaImage {
 /// Scales `image` up just enough to cover a `size`-sized output, then crops
 /// the centered `size`-sized window out of it.
 fn rasterize(image: &image::RgbaImage, size: Size<i32, Logical>) -> MemoryRenderBuffer {
+    buffer_from_image(&rasterize_image(image, size))
+}
+
+fn rasterize_image(image: &image::RgbaImage, size: Size<i32, Logical>) -> image::RgbaImage {
     let target_w = size.w.max(1) as u32;
     let target_h = size.h.max(1) as u32;
 
@@ -71,12 +101,14 @@ fn rasterize(image: &image::RgbaImage, size: Size<i32, Logical>) -> MemoryRender
 
     let crop_x = (scaled_w - target_w) / 2;
     let crop_y = (scaled_h - target_h) / 2;
-    let cropped = image::imageops::crop_imm(&scaled, crop_x, crop_y, target_w, target_h).to_image();
+    image::imageops::crop_imm(&scaled, crop_x, crop_y, target_w, target_h).to_image()
+}
 
+fn buffer_from_image(image: &image::RgbaImage) -> MemoryRenderBuffer {
     MemoryRenderBuffer::from_slice(
-        &cropped,
+        image,
         Fourcc::Abgr8888,
-        (target_w as i32, target_h as i32),
+        (image.width() as i32, image.height() as i32),
         1,
         Transform::Normal,
         None,
@@ -122,5 +154,21 @@ mod tests {
     fn unloadable_path_falls_back_to_default() {
         let wallpaper = Wallpaper::load(Some("/nonexistent/path/to/wallpaper.png"));
         assert!(wallpaper.image.width() > 0);
+    }
+
+    #[test]
+    fn blurred_buffer_is_cached_by_size_and_radius() {
+        let mut wallpaper = Wallpaper::load(None);
+        let size = Size::from((320, 200));
+        wallpaper.blurred_buffer_for(size, 8);
+        assert_eq!(
+            wallpaper
+                .blur_cache
+                .as_ref()
+                .map(|(cached_size, radius, _)| (*cached_size, *radius)),
+            Some((size, 8))
+        );
+        wallpaper.blurred_buffer_for(size, 16);
+        assert_eq!(wallpaper.blur_cache.as_ref().map(|(_, radius, _)| *radius), Some(16));
     }
 }

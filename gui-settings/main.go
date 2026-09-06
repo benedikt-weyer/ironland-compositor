@@ -216,6 +216,35 @@ func buildAppearanceTab(cfg *Config, w fyne.Window) fyne.CanvasObject {
 	)
 	wallpaperHint.Wrapping = fyne.TextWrapWord
 
+	blurEnabled := widget.NewCheck("Blur behind translucent application windows", nil)
+	blurEnabled.SetChecked(cfg.Blur.Enabled)
+	blurEnabled.OnChanged = func(checked bool) {
+		cfg.Blur.Enabled = checked
+		resets.refresh()
+	}
+	blurRadius := widget.NewEntry()
+	blurRadius.SetText(fmt.Sprintf("%d", cfg.Blur.Radius))
+	blurRadius.SetPlaceHolder("1–50")
+	blurRadius.OnChanged = func(value string) {
+		var radius int
+		if _, err := fmt.Sscanf(value, "%d", &radius); err == nil && radius >= 1 && radius <= 50 {
+			cfg.Blur.Radius = radius
+		}
+		resets.refresh()
+	}
+	blurForm := widget.NewForm(
+		widget.NewFormItem("Enable blur", resets.item(blurEnabled,
+			func() bool { return cfg.Blur.Enabled != defaults.Blur.Enabled },
+			func() { blurEnabled.SetChecked(defaults.Blur.Enabled) },
+		)),
+		widget.NewFormItem("Blur radius", resets.item(blurRadius,
+			func() bool { return cfg.Blur.Radius != defaults.Blur.Radius },
+			func() { blurRadius.SetText(fmt.Sprintf("%d", defaults.Blur.Radius)) },
+		)),
+	)
+	blurHint := widget.NewLabel("Gaussian blur is visible through transparent and translucent parts of application windows. Higher radii are smoother but require more work when the wallpaper changes or an output is resized. A compositor restart is required.")
+	blurHint.Wrapping = fyne.TextWrapWord
+
 	darkModeRow := resets.item(darkMode,
 		func() bool { return cfg.Appearance.DarkMode != defaults.Appearance.DarkMode },
 		func() { darkMode.SetChecked(defaults.Appearance.DarkMode) },
@@ -226,7 +255,11 @@ func buildAppearanceTab(cfg *Config, w fyne.Window) fyne.CanvasObject {
 		func() { wallpaper.SetText(defaults.Wallpaper) },
 	)))
 
-	return resets.page(container.NewVBox(darkModeRow, colorHint, widget.NewSeparator(), wallpaperForm, wallpaperHint))
+	return resets.page(container.NewVBox(
+		darkModeRow, colorHint,
+		widget.NewSeparator(), wallpaperForm, wallpaperHint,
+		widget.NewSeparator(), blurForm, blurHint,
+	))
 }
 
 // buildWorkspacesTab lays out the virtual-desktop settings: split-per-monitor

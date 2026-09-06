@@ -30,7 +30,9 @@ in
       `position` places this output relative to another
       (`right_of`/`left_of`/`above`/`below`, each an output name) or at an
       absolute `{ x, y }`. An output not listed here is auto-placed to the
-      right of the others, matching the compositor's previous behavior. And
+      right of the others, matching the compositor's previous behavior.
+      Gaussian background blur for translucent application windows is under
+      `blur`, with `enabled` (default false) and `radius` (default 12). And
       virtual desktops under `workspaces`: `mode` is `"per_monitor"`
       (default, each output has its own set) or `"combined"` (every output
       switches together); `count` is the starting number of workspaces

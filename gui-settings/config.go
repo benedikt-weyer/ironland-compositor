@@ -27,6 +27,11 @@ type AppearanceSettings struct {
 	DarkMode bool `toml:"dark_mode"`
 }
 
+type BlurSettings struct {
+	Enabled bool `toml:"enabled"`
+	Radius  int  `toml:"radius"`
+}
+
 // WorkspaceSettings mirrors `config::WorkspaceSettings` in the compositor:
 // how many virtual desktops exist, whether each output gets its own set or
 // every output shares one, whether the count grows/shrinks on demand, and
@@ -55,6 +60,7 @@ type Config struct {
 	// desktop background, scaled and center-cropped to cover each output.
 	// Empty uses the compositor's built-in default wallpaper.
 	Wallpaper  string                    `toml:"wallpaper,omitempty"`
+	Blur       BlurSettings              `toml:"blur"`
 	Appearance AppearanceSettings        `toml:"appearance"`
 	Shortcuts  map[string][]string       `toml:"shortcuts"`
 	Outputs    map[string]OutputSettings `toml:"outputs"`
@@ -206,6 +212,7 @@ func defaultConfig() Config {
 		Terminal:    "weston-terminal",
 		Browser:     "brave",
 		FileManager: "iron-file",
+		Blur:        BlurSettings{Radius: 12},
 		Shortcuts:   defaultShortcuts(),
 		Outputs:     map[string]OutputSettings{},
 		Workspaces:  defaultWorkspaceSettings(),
@@ -274,6 +281,10 @@ func loadConfig() (Config, string) {
 		}
 		cfg.TopBar = raw.TopBar
 		cfg.Wallpaper = raw.Wallpaper
+		cfg.Blur.Enabled = raw.Blur.Enabled
+		if raw.Blur.Radius > 0 {
+			cfg.Blur.Radius = raw.Blur.Radius
+		}
 		cfg.Appearance = raw.Appearance
 		cfg.Keyboard = raw.Keyboard
 		for action, keys := range raw.Shortcuts {

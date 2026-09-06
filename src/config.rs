@@ -180,6 +180,24 @@ pub struct WorkspaceSettings {
     pub overlay: bool,
 }
 
+/// Background blur shown through translucent application surfaces.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct BlurSettings {
+    pub enabled: bool,
+    /// Gaussian standard deviation in logical pixels.
+    pub radius: u32,
+}
+
+impl Default for BlurSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            radius: 12,
+        }
+    }
+}
+
 impl Default for WorkspaceSettings {
     fn default() -> Self {
         WorkspaceSettings {
@@ -211,6 +229,7 @@ struct RawConfig {
     file_manager: Option<String>,
     top_bar: bool,
     wallpaper: Option<String>,
+    blur: BlurSettings,
     shortcuts: HashMap<String, Vec<String>>,
     outputs: HashMap<String, OutputSettings>,
     workspaces: WorkspaceSettings,
@@ -235,6 +254,8 @@ pub struct Config {
     /// (the default, and also the fallback if the path fails to load) uses
     /// the compositor's built-in default wallpaper.
     pub wallpaper: Option<String>,
+    /// Gaussian backdrop blur settings for translucent application windows.
+    pub blur: BlurSettings,
     /// action name -> key combos, e.g. `"toggle_launcher" -> ["ctrl+space"]`.
     /// Always fully populated: entries not overridden by the config file
     /// keep their built-in default.
@@ -256,6 +277,7 @@ impl Default for Config {
             file_manager: default_file_manager(),
             top_bar: false,
             wallpaper: None,
+            blur: BlurSettings::default(),
             shortcuts: default_shortcuts(),
             outputs: HashMap::new(),
             workspaces: WorkspaceSettings::default(),
@@ -413,6 +435,7 @@ impl Config {
                 file_manager: raw.file_manager.unwrap_or_else(default_file_manager),
                 top_bar: raw.top_bar,
                 wallpaper: raw.wallpaper,
+                blur: raw.blur,
                 shortcuts,
                 outputs: raw.outputs,
                 workspaces: raw.workspaces,
@@ -617,6 +640,7 @@ mod tests {
             file_manager: None,
             top_bar: false,
             wallpaper: None,
+            blur: BlurSettings::default(),
             shortcuts,
             outputs: HashMap::new(),
             workspaces: WorkspaceSettings::default(),
@@ -749,6 +773,13 @@ mod tests {
         let raw: RawConfig =
             toml::from_str("[outputs.DP-1]\nrefresh_rate = 144000\n").unwrap();
         assert_eq!(raw.outputs["DP-1"].refresh_rate, Some(144_000));
+    }
+
+    #[test]
+    fn blur_defaults_off_and_parses() {
+        assert_eq!(BlurSettings::default(), BlurSettings { enabled: false, radius: 12 });
+        let raw: RawConfig = toml::from_str("[blur]\nenabled = true\nradius = 20\n").unwrap();
+        assert_eq!(raw.blur, BlurSettings { enabled: true, radius: 20 });
     }
 
     #[test]

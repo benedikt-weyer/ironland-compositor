@@ -1572,6 +1572,7 @@ impl AnvilState<UdevData> {
             &mut self.launcher,
             workspace_overlay_shown.is_some(),
             &mut self.wallpaper,
+            &self.config.blur,
         );
         let reschedule = match result {
             Ok((has_rendered, states)) => {
@@ -1656,6 +1657,7 @@ fn render_surface<'a>(
     launcher: &mut LauncherState,
     show_workspace_overlay: bool,
     wallpaper: &mut crate::wallpaper::Wallpaper,
+    blur: &crate::config::BlurSettings,
 ) -> Result<(bool, RenderElementStates), SwapBuffersError> {
     let output_geometry = space.output_geometry(output).unwrap();
     let scale = Scale::from(output.current_scale().fractional_scale());
@@ -1776,11 +1778,16 @@ fn render_surface<'a>(
         }
     }
 
-    let wallpaper_buffer = wallpaper.buffer_for(output_geometry.size);
+    let wallpaper_buffer = wallpaper.buffer_for(output_geometry.size).clone();
+    let blurred_wallpaper_buffer = blur.enabled.then(|| {
+        wallpaper
+            .blurred_buffer_for(output_geometry.size, blur.radius)
+            .clone()
+    });
     let background_element = MemoryRenderBufferRenderElement::from_buffer(
         renderer,
         Point::from((0.0, 0.0)),
-        wallpaper_buffer,
+        &wallpaper_buffer,
         None,
         None,
         None,
@@ -1794,6 +1801,7 @@ fn render_surface<'a>(
         space,
         custom_elements,
         background_element,
+        blurred_wallpaper_buffer.as_ref(),
         renderer,
         show_window_preview,
     );
