@@ -161,13 +161,18 @@ pub fn mark_floating<B: Backend>(state: &AnvilState<B>, window: &WindowElement, 
 
 /// Drops dead windows from every output's floating registry. Tiled windows
 /// are cleaned up by [`tiling::cleanup_dead`] (which calls this too).
-pub fn cleanup_dead<B: Backend>(state: &AnvilState<B>) {
+/// Returns whether any window was removed.
+pub fn cleanup_dead<B: Backend>(state: &AnvilState<B>) -> bool {
+    let mut changed = false;
     for output in state.space.outputs() {
         let ws = WorkspaceState::get(output);
         for slot in ws.floating.borrow_mut().iter_mut() {
+            let old_len = slot.len();
             slot.retain(|w| w.alive());
+            changed |= slot.len() != old_len;
         }
     }
+    changed
 }
 
 /// The next workspace index `delta` steps from `cur`, or `None` if that step

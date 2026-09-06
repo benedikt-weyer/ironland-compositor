@@ -522,20 +522,23 @@ pub fn retile_all_outputs<BackendData: Backend>(state: &mut AnvilState<BackendDa
 
 /// Drop dead windows from every output's tiling tree (every workspace, not
 /// just the active one) and re-flow whichever active workspaces changed.
-pub fn cleanup_dead<BackendData: Backend>(state: &mut AnvilState<BackendData>) {
+/// Returns whether any window was removed.
+pub fn cleanup_dead<BackendData: Backend>(state: &mut AnvilState<BackendData>) -> bool {
     let outputs: Vec<Output> = state.space.outputs().cloned().collect();
+    let mut changed = false;
     for output in &outputs {
         let active = WorkspaceState::get(output).active();
         let mut active_changed = false;
         for idx in 0..TilingState::len(output) {
-            let changed = TilingState::tree_mut(output, idx).retain_alive();
-            active_changed |= changed && idx == active;
+            let workspace_changed = TilingState::tree_mut(output, idx).retain_alive();
+            changed |= workspace_changed;
+            active_changed |= workspace_changed && idx == active;
         }
         if active_changed {
             apply_layout(state, output);
         }
     }
-    crate::shell::workspace::cleanup_dead(state);
+    changed | crate::shell::workspace::cleanup_dead(state)
 }
 
 /// Move keyboard focus to the tiled window neighboring the currently focused
