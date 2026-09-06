@@ -16,7 +16,7 @@
 //! this.
 
 use smithay::reexports::wayland_server::{
-    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
+    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New,
     backend::{ClientId, GlobalId},
     protocol::wl_surface::WlSurface,
 };
@@ -52,7 +52,7 @@ pub struct FocusGrabManagerState {
 impl FocusGrabManagerState {
     pub fn new<D>(dh: &DisplayHandle) -> Self
     where
-        D: GlobalDispatch<IronlandFocusGrabManagerV1, ManagerGlobalData>,
+        D: GlobalDispatch<IronlandFocusGrabManagerV1, ManagerGlobalData> + 'static,
     {
         let global = dh.create_global::<D, IronlandFocusGrabManagerV1, _>(1, ManagerGlobalData);
         FocusGrabManagerState {
@@ -126,7 +126,9 @@ where
     }
 }
 
-impl<D: FocusGrabHandler> Dispatch2<IronlandFocusGrabManagerV1, D> for ManagerToken {
+impl<D: FocusGrabHandler + Dispatch<IronlandFocusGrabV1, GrabToken>> Dispatch2<IronlandFocusGrabManagerV1, D>
+    for ManagerToken
+{
     fn request(
         &self,
         state: &mut D,
@@ -142,7 +144,6 @@ impl<D: FocusGrabHandler> Dispatch2<IronlandFocusGrabManagerV1, D> for ManagerTo
                 state.focus_grab_state().grabs.push(GrabEntry { surface, resource });
             }
             ironland_focus_grab_manager_v1::Request::Destroy => {}
-            _ => {}
         }
     }
 }
@@ -157,7 +158,7 @@ impl<D: FocusGrabHandler> Dispatch2<IronlandFocusGrabV1, D> for GrabToken {
         _dh: &DisplayHandle,
         _data_init: &mut DataInit<'_, D>,
     ) {
-        if let ironland_focus_grab_v1::Request::Destroy = request {}
+        let ironland_focus_grab_v1::Request::Destroy = request;
     }
 
     fn destroyed(&self, state: &mut D, _client: ClientId, resource: &IronlandFocusGrabV1) {

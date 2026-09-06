@@ -28,10 +28,13 @@ use smithay::{
     wayland::{
         input_method::InputMethodSeat,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitorSeat,
-        seat::WaylandFocus,
         shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer},
     },
 };
+// Already brought in by the `udev`-gated `smithay::wayland::seat::WaylandFocus`
+// import below when that feature is on.
+#[cfg(not(feature = "udev"))]
+use smithay::wayland::seat::WaylandFocus;
 
 use smithay::backend::input::AbsolutePositionEvent;
 

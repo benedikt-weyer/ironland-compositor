@@ -9,7 +9,7 @@
 //! matching `ironland_shortcut_v1` object, if any.
 
 use smithay::reexports::wayland_server::{
-    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
+    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New,
     backend::{ClientId, GlobalId},
 };
 use smithay::wayland::{Dispatch2, GlobalDispatch2};
@@ -44,7 +44,7 @@ pub struct ShortcutsManagerState {
 impl ShortcutsManagerState {
     pub fn new<D>(dh: &DisplayHandle) -> Self
     where
-        D: GlobalDispatch<IronlandShortcutsManagerV1, ManagerGlobalData>,
+        D: GlobalDispatch<IronlandShortcutsManagerV1, ManagerGlobalData> + 'static,
     {
         let global = dh.create_global::<D, IronlandShortcutsManagerV1, _>(1, ManagerGlobalData);
         ShortcutsManagerState {
@@ -108,7 +108,9 @@ where
     }
 }
 
-impl<D: ShortcutsHandler> Dispatch2<IronlandShortcutsManagerV1, D> for ManagerToken {
+impl<D: ShortcutsHandler + Dispatch<IronlandShortcutV1, ShortcutToken>> Dispatch2<IronlandShortcutsManagerV1, D>
+    for ManagerToken
+{
     fn request(
         &self,
         state: &mut D,
@@ -127,7 +129,6 @@ impl<D: ShortcutsHandler> Dispatch2<IronlandShortcutsManagerV1, D> for ManagerTo
                     .push(ShortcutEntry { name, resource });
             }
             ironland_shortcuts_manager_v1::Request::Destroy => {}
-            _ => {}
         }
     }
 }
@@ -142,7 +143,7 @@ impl<D: ShortcutsHandler> Dispatch2<IronlandShortcutV1, D> for ShortcutToken {
         _dh: &DisplayHandle,
         _data_init: &mut DataInit<'_, D>,
     ) {
-        if let ironland_shortcut_v1::Request::Destroy = request {}
+        let ironland_shortcut_v1::Request::Destroy = request;
     }
 
     fn destroyed(&self, state: &mut D, _client: ClientId, resource: &IronlandShortcutV1) {
