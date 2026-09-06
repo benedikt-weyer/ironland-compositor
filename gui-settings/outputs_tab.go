@@ -7,6 +7,8 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -65,8 +67,14 @@ func modeOf(s OutputSettings) positionMode {
 // simplest way to keep the list-of-cards in sync after an add/remove.
 func buildOutputsTab(cfg *Config, w fyne.Window) fyne.CanvasObject {
 	holder := container.NewVBox()
+	resetPage := widget.NewButtonWithIcon("Reset page", theme.ViewRefreshIcon(), nil)
+	resetPage.Hide()
 
 	var rebuild func()
+	resetPage.OnTapped = func() {
+		cfg.Outputs = map[string]OutputSettings{}
+		rebuild()
+	}
 	rebuild = func() {
 		holder.RemoveAll()
 
@@ -95,6 +103,11 @@ func buildOutputsTab(cfg *Config, w fyne.Window) fyne.CanvasObject {
 			rebuild()
 		})
 		holder.Add(container.NewBorder(nil, nil, nil, addButton, addName))
+		if len(cfg.Outputs) == 0 {
+			resetPage.Hide()
+		} else {
+			resetPage.Show()
+		}
 
 		holder.Refresh()
 	}
@@ -103,7 +116,9 @@ func buildOutputsTab(cfg *Config, w fyne.Window) fyne.CanvasObject {
 	hint := widget.NewLabel("Connector names come from the compositor's logs on connect (e.g. \"Trying to setup connector eDP-1\"), or from `wlr-randr`/`kanshi` output names. Each monitor not listed here is auto-placed to the right of the others.")
 	hint.Wrapping = fyne.TextWrapWord
 
-	return container.NewBorder(nil, hint, nil, nil, container.NewVScroll(holder))
+	header := container.NewHBox(layout.NewSpacer(), resetPage)
+	body := container.NewVBox(holder, hint)
+	return container.NewBorder(header, nil, nil, nil, container.NewScroll(body))
 }
 
 func buildOutputCard(cfg *Config, name string, rebuild func()) fyne.CanvasObject {
@@ -111,17 +126,29 @@ func buildOutputCard(cfg *Config, name string, rebuild func()) fyne.CanvasObject
 
 	title := widget.NewLabelWithStyle(name, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
-	removeButton := widget.NewButton("Remove", func() {
+	removeButton := widget.NewButtonWithIcon("Reset monitor", theme.ViewRefreshIcon(), func() {
 		delete(cfg.Outputs, name)
 		rebuild()
 	})
 
+	primaryReset := widget.NewButtonWithIcon("Reset", theme.ViewRefreshIcon(), nil)
+	var refreshPrimaryReset func()
 	primary := widget.NewCheck("Primary monitor", func(checked bool) {
 		s := cfg.Outputs[name]
 		s.Primary = checked
 		cfg.Outputs[name] = s
+		refreshPrimaryReset()
 	})
+	refreshPrimaryReset = func() {
+		if cfg.Outputs[name].Primary {
+			primaryReset.Show()
+		} else {
+			primaryReset.Hide()
+		}
+	}
+	primaryReset.OnTapped = func() { primary.SetChecked(false) }
 	primary.SetChecked(settings.Primary)
+	refreshPrimaryReset()
 
 	targetEntry := widget.NewEntry()
 	targetEntry.SetPlaceHolder("other monitor's connector name")
@@ -164,8 +191,17 @@ func buildOutputCard(cfg *Config, name string, rebuild func()) fyne.CanvasObject
 	mirrorRow := container.NewBorder(nil, nil, widget.NewLabel("Duplicate of:"), nil, targetEntry)
 
 	extraRows := container.NewVBox()
+	positionReset := widget.NewButtonWithIcon("Reset", theme.ViewRefreshIcon(), nil)
+	var refreshPositionReset func()
 
 	mode := widget.NewSelect(positionModes, nil)
+	refreshPositionReset = func() {
+		if modeOf(cfg.Outputs[name]) == modeAuto {
+			positionReset.Hide()
+		} else {
+			positionReset.Show()
+		}
+	}
 	mode.OnChanged = func(selected string) {
 		s := cfg.Outputs[name]
 		cfg.Outputs[name] = applyModeField(s, positionMode(selected), targetEntry.Text, xEntry.Text, yEntry.Text)
@@ -182,24 +218,38 @@ func buildOutputCard(cfg *Config, name string, rebuild func()) fyne.CanvasObject
 			extraRows.Add(mirrorRow)
 		}
 		extraRows.Refresh()
+		refreshPositionReset()
 	}
 	mode.SetSelected(string(modeOf(settings)))
 
 	targetEntry.OnChanged = func(text string) {
 		s := cfg.Outputs[name]
 		cfg.Outputs[name] = applyModeField(s, positionMode(mode.Selected), text, xEntry.Text, yEntry.Text)
+		refreshPositionReset()
 	}
 	xEntry.OnChanged = func(text string) {
 		s := cfg.Outputs[name]
 		cfg.Outputs[name] = applyModeField(s, positionMode(mode.Selected), targetEntry.Text, text, yEntry.Text)
+		refreshPositionReset()
 	}
 	yEntry.OnChanged = func(text string) {
 		s := cfg.Outputs[name]
 		cfg.Outputs[name] = applyModeField(s, positionMode(mode.Selected), targetEntry.Text, xEntry.Text, text)
+		refreshPositionReset()
 	}
+	positionReset.OnTapped = func() {
+		targetEntry.SetText("")
+		xEntry.SetText("")
+		yEntry.SetText("")
+		mode.SetSelected(string(modeAuto))
+		refreshPositionReset()
+	}
+	refreshPositionReset()
 
 	header := container.NewBorder(nil, nil, title, removeButton)
-	body := container.NewVBox(primary, mode, extraRows)
+	primaryRow := container.NewBorder(nil, nil, nil, primaryReset, primary)
+	positionRow := container.NewBorder(nil, nil, nil, positionReset, mode)
+	body := container.NewVBox(primaryRow, positionRow, extraRows)
 
 	return container.NewVBox(header, body, widget.NewSeparator())
 }

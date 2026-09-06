@@ -23,6 +23,8 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 	cfg.Keyboard.Layout = "de"
 	cfg.Keyboard.Variant = "nodeadkeys"
 	cfg.Terminal = "alacritty"
+	cfg.Browser = "firefox"
+	cfg.FileManager = "nautilus"
 	cfg.TopBar = true
 	cfg.Appearance.DarkMode = true
 	cfg.Shortcuts["quit"] = []string{"ctrl+alt+q"}
@@ -45,6 +47,12 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 	if loaded.Terminal != "alacritty" {
 		t.Fatalf("loadConfig terminal = %q, want alacritty", loaded.Terminal)
 	}
+	if loaded.Browser != "firefox" {
+		t.Fatalf("loadConfig browser = %q, want firefox", loaded.Browser)
+	}
+	if loaded.FileManager != "nautilus" {
+		t.Fatalf("loadConfig fileManager = %q, want nautilus", loaded.FileManager)
+	}
 	if !loaded.TopBar {
 		t.Fatalf("loadConfig topBar = %v, want true", loaded.TopBar)
 	}
@@ -57,6 +65,24 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 	// An action untouched by the override should keep its built-in default.
 	if !reflect.DeepEqual(loaded.Shortcuts["toggle_launcher"], []string{"super"}) {
 		t.Fatalf("loadConfig shortcuts[toggle_launcher] = %v", loaded.Shortcuts["toggle_launcher"])
+	}
+}
+
+func TestEqualStrings(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		a, b []string
+		want bool
+	}{
+		{name: "equal", a: []string{"super+q", "super+x"}, b: []string{"super+q", "super+x"}, want: true},
+		{name: "order matters", a: []string{"super+q", "super+x"}, b: []string{"super+x", "super+q"}},
+		{name: "different length", a: []string{"super+q"}, b: []string{"super+q", "super+x"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := equalStrings(test.a, test.b); got != test.want {
+				t.Fatalf("equalStrings(%v, %v) = %v, want %v", test.a, test.b, got, test.want)
+			}
+		})
 	}
 }
 

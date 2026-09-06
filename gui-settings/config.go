@@ -265,6 +265,12 @@ func loadConfig() (Config, string) {
 		if raw.Terminal != "" {
 			cfg.Terminal = raw.Terminal
 		}
+		if raw.Browser != "" {
+			cfg.Browser = raw.Browser
+		}
+		if raw.FileManager != "" {
+			cfg.FileManager = raw.FileManager
+		}
 		cfg.TopBar = raw.TopBar
 		cfg.Wallpaper = raw.Wallpaper
 		cfg.Appearance = raw.Appearance
