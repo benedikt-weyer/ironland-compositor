@@ -72,11 +72,13 @@
           libxi
           libxxf86vm
         ];
-      in
-      {
         # The real build needs the full source: `resources/*` is pulled in via
-        # `include_bytes!`, which `cleanCargoSource` above would strip.
-        packages.default = craneLib.buildPackage (commonArgs // {
+        # `include_bytes!`, which `cleanCargoSource` above would strip. This
+        # workspace's `default-members` (see Cargo.toml) means a plain
+        # `cargo build` here also produces `ironlandctl` alongside
+        # `ironland-compositor` itself, so `settings-gui` below can put it
+        # on its own PATH.
+        compositorPackage = craneLib.buildPackage (commonArgs // {
           src = craneLib.path ./.;
           inherit cargoArtifacts;
           nativeBuildInputs = nativeBuildInputs ++ [ pkgs.makeWrapper ];
@@ -103,8 +105,18 @@
             Name=org.freedesktop.impl.portal.desktop.ironland
             Exec=$out/bin/ironland-portal-global-shortcuts
             EOF
+
+            # `ironlandctl` (see `ironlandctl/`) generates its own completion
+            # scripts, so shell out to the just-built binary rather than
+            # checking in a copy that can drift from the real CLI.
+            install -Dm444 /dev/stdin $out/share/zsh/site-functions/_ironlandctl <<< "$($out/bin/ironlandctl completions zsh)"
+            install -Dm444 /dev/stdin $out/share/bash-completion/completions/ironlandctl <<< "$($out/bin/ironlandctl completions bash)"
+            install -Dm444 /dev/stdin $out/share/fish/vendor_completions.d/ironlandctl.fish <<< "$($out/bin/ironlandctl completions fish)"
           '';
         });
+      in
+      {
+        packages.default = compositorPackage;
 
         packages.settings-gui = pkgs.buildGoModule {
           pname = "ironland-compositor-settings-gui";
@@ -124,9 +136,12 @@
           tags = [ "wayland" ];
           # The appearance tab's dark-mode toggle shells out to `gsettings`
           # (see gui-settings/appearance.go) rather than linking against
-          # glib, so it just needs the binary on PATH.
+          # glib, so it just needs the binary on PATH. Loading/saving
+          # settings themselves now shells out to `ironlandctl` (see
+          # ironlandctl.go) instead of reading/writing config.toml directly,
+          # so that needs to be on PATH too.
           postFixup = ''
-            wrapProgram $out/bin/gui-settings --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.glib pkgs.wayland-utils ]}
+            wrapProgram $out/bin/gui-settings --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.glib pkgs.wayland-utils compositorPackage ]}
           '';
         };
 

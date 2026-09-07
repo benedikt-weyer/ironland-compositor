@@ -1839,9 +1839,8 @@ fn action_for_name(
 /// config changes so bindings and their associated commands update live.
 pub(crate) fn compile_keybindings(
     config: &crate::config::Config,
-) -> Vec<(crate::config::KeyModifiers, Keysym, KeyAction)> {
-    config
-        .parsed_keybindings()
+) -> Vec<(crate::keybindings::KeyModifiers, Keysym, KeyAction)> {
+    crate::keybindings::parsed_keybindings(config)
         .into_iter()
         .filter_map(|binding| {
             match action_for_name(
@@ -1867,10 +1866,10 @@ pub(crate) fn compile_keybindings(
 }
 
 /// Resolves the `KeyAction` to fire on a bare Super key tap (see
-/// [`crate::config::Config::super_tap_action`]), if one is configured.
-/// Called once at startup alongside `compile_keybindings`.
+/// [`crate::keybindings::super_tap_action`]), if one is configured. Called
+/// once at startup alongside `compile_keybindings`.
 pub(crate) fn compile_super_tap_action(config: &crate::config::Config) -> Option<KeyAction> {
-    let action_name = config.super_tap_action()?;
+    let action_name = crate::keybindings::super_tap_action(config)?;
     match action_for_name(
         action_name,
         &config.terminal,
@@ -1889,7 +1888,7 @@ pub(crate) fn compile_super_tap_action(config: &crate::config::Config) -> Option
 }
 
 /// Whether `keysym` is one of the physical Super/logo keys, used to detect a
-/// bare Super tap (see `config::Config::super_tap_action`).
+/// bare Super tap (see `keybindings::super_tap_action`).
 fn is_super_keysym(keysym: Keysym) -> bool {
     matches!(keysym, Keysym::Super_L | Keysym::Super_R)
 }
@@ -1911,8 +1910,8 @@ fn process_dynamic_shortcut(modifiers: ModifiersState, keysym: Keysym) -> Option
 }
 
 fn process_keyboard_shortcut(
-    keybindings: &[(crate::config::KeyModifiers, Keysym, KeyAction)],
-    bound_shortcuts: &[(crate::config::KeyModifiers, Keysym, String)],
+    keybindings: &[(crate::keybindings::KeyModifiers, Keysym, KeyAction)],
+    bound_shortcuts: &[(crate::keybindings::KeyModifiers, Keysym, String)],
     modifiers: ModifiersState,
     keysym: Keysym,
 ) -> Option<KeyAction> {

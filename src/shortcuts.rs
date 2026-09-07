@@ -16,7 +16,7 @@ use smithay::reexports::wayland_server::{
 };
 use smithay::wayland::{Dispatch2, GlobalDispatch2};
 
-use crate::config::KeyModifiers;
+use crate::keybindings::KeyModifiers;
 use crate::ironland_protocols::shortcuts::{
     ironland_shortcut_v1::{self, IronlandShortcutV1},
     ironland_shortcuts_manager_v1::{self, IronlandShortcutsManagerV1},

@@ -7,7 +7,13 @@
     allow(dead_code, unused_imports)
 )]
 
-pub mod config;
+// The config schema/file-I/O itself lives in the `ironland-config` crate
+// (a separate, smithay-free workspace member so `ironlandctl` and the
+// settings GUI can share it without a heavy build) - re-exported here under
+// its old name so every existing `crate::config::Foo` reference keeps
+// working unchanged.
+pub use ironland_config as config;
+pub mod keybindings;
 #[cfg(any(feature = "udev", feature = "xwayland"))]
 pub mod cursor;
 pub mod drawing;

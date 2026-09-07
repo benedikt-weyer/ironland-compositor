@@ -1,0 +1,19 @@
+[package]
+name = "ironlandctl"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "CLI to read and edit ironland-compositor's config.toml."
+
+[[bin]]
+name = "ironlandctl"
+path = "src/main.rs"
+
+[dependencies]
+ironland-config = { path = "../ironland-config" }
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+toml_edit = "0.25"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"

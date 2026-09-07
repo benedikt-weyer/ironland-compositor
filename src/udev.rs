@@ -1195,7 +1195,7 @@ impl AnvilState<UdevData> {
                 .collect();
             let logical_size: Size<i32, Logical> =
                 (drm_mode.size().0 as i32, drm_mode.size().1 as i32).into();
-            let position = crate::config::resolve_output_position(
+            let position = crate::keybindings::resolve_output_position(
                 &output_settings,
                 &output.name(),
                 logical_size,

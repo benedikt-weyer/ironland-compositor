@@ -1,4 +1,4 @@
-//! User-facing settings: keyboard layout and keyboard shortcuts.
+//! Config schema and file I/O for ironland-compositor's `config.toml`.
 //!
 //! Settings are read from the first of these that exists, in order:
 //!
@@ -6,27 +6,31 @@
 //! 2. `$XDG_CONFIG_HOME/ironland-compositor/config.toml` (or `~/.config/...`)
 //! 3. `/etc/ironland-compositor/config.toml` (written by the NixOS module)
 //!
-//! None of these existing is not an error: the compositor falls back to the
-//! defaults below, which reproduce the shortcuts that used to be hardcoded.
-//! A malformed file is logged and ignored rather than treated as fatal,
-//! since a typo in a config file shouldn't stop the compositor from
-//! starting.
+//! None of these existing is not an error: callers fall back to the
+//! defaults below, which reproduce the shortcuts that used to be
+//! hardcoded. A malformed file is reported to the caller rather than
+//! silently ignored here - [`Config::load`] logs and falls back to
+//! defaults (matching the compositor's own live-reload tolerance), while
+//! [`Config::try_load`] surfaces the parse error for a caller (`ironlandctl`,
+//! the settings GUI) that wants to tell the user about it instead.
+//!
+//! This crate is deliberately free of any Wayland/smithay dependency so it
+//! can be shared, as a lightweight build, between the compositor itself,
+//! `ironlandctl`, and (indirectly, via `ironlandctl`) the Go settings GUI.
+//! Anything that needs a keysym or geometry type - parsing a keybinding
+//! spec into a modifiers+keysym pair, resolving an output's on-screen
+//! position - lives in the compositor crate's own `src/keybindings.rs`
+//! instead, built on top of the plain-data types here.
 
 use std::{collections::HashMap, env, fs, path::PathBuf};
 
-use serde::Deserialize;
-use smithay::{
-    input::keyboard::{Keysym, ModifiersState, XkbConfig, xkb},
-    utils::{Logical, Point, Rectangle, Size},
-};
-use tracing::warn;
+use serde::{Deserialize, Serialize};
 
 /// Keyboard layout settings, passed straight through to xkbcommon.
 ///
 /// An empty string for any field means "let xkbcommon fall back to its
-/// `XKB_DEFAULT_*` environment variables / built-in default", matching
-/// [`XkbConfig`]'s own default behavior.
-#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+/// `XKB_DEFAULT_*` environment variables / built-in default".
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct KeyboardSettings {
     pub rules: String,
@@ -36,47 +40,11 @@ pub struct KeyboardSettings {
     pub options: String,
 }
 
-impl KeyboardSettings {
-    pub fn to_xkb_config(&self) -> XkbConfig<'_> {
-        XkbConfig {
-            rules: &self.rules,
-            model: &self.model,
-            layout: &self.layout,
-            variant: &self.variant,
-            options: if self.options.is_empty() {
-                None
-            } else {
-                Some(self.options.clone())
-            },
-        }
-    }
-}
-
-/// Which modifiers a keybinding requires. Caps lock/num lock/level3-4 shift
-/// are deliberately not part of a binding's identity: only ctrl/alt/shift/
-/// logo distinguish one shortcut from another here.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct KeyModifiers {
-    pub ctrl: bool,
-    pub alt: bool,
-    pub shift: bool,
-    pub logo: bool,
-}
-
-impl KeyModifiers {
-    pub fn matches(&self, mods: &ModifiersState) -> bool {
-        self.ctrl == mods.ctrl
-            && self.alt == mods.alt
-            && self.shift == mods.shift
-            && self.logo == mods.logo
-    }
-}
-
 /// Where to place an output relative to another, already-placed one, or at
 /// an explicit logical position. Kept separate from [`OutputSettings::mirror_of`]:
 /// mirroring takes priority over `position` when both are set for the same
 /// output.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(untagged)]
 pub enum OutputPosition {
     RightOf { right_of: String },
@@ -88,7 +56,7 @@ pub enum OutputPosition {
 
 /// Per-output settings, keyed by connector name (e.g. `"eDP-1"`,
 /// `"HDMI-A-1"`) in the `[outputs.*]` config table.
-#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 #[serde(default)]
 pub struct OutputSettings {
     /// Marks this the primary monitor. At most one output should set this;
@@ -107,81 +75,10 @@ pub struct OutputSettings {
     pub position: Option<OutputPosition>,
 }
 
-/// Resolves where a newly-connecting output named `name`, with logical size
-/// `size`, should be placed, given its [`OutputSettings`] and the outputs
-/// already placed in the space (`name -> current geometry`).
-///
-/// Falls back to auto-placement (and logs a warning) if a referenced output
-/// (`mirror_of`/`right_of`/etc.) hasn't connected yet.
-pub fn resolve_output_position(
-    settings: &OutputSettings,
-    name: &str,
-    size: Size<i32, Logical>,
-    placed: &[(String, Rectangle<i32, Logical>)],
-) -> Point<i32, Logical> {
-    let find = |target: &str| {
-        placed
-            .iter()
-            .find(|(n, _)| n == target)
-            .map(|(_, rect)| *rect)
-    };
-
-    if let Some(target) = settings.mirror_of.as_deref() {
-        match find(target) {
-            Some(rect) => return rect.loc,
-            None => warn!(
-                output = name,
-                mirror_of = target,
-                "Mirror target not connected yet, using auto placement"
-            ),
-        }
-    }
-
-    match &settings.position {
-        Some(OutputPosition::Absolute { x, y }) => return (*x, *y).into(),
-        Some(OutputPosition::RightOf { right_of }) => match find(right_of) {
-            Some(rect) => return (rect.loc.x + rect.size.w, rect.loc.y).into(),
-            None => warn!(
-                output = name,
-                right_of, "Reference output not connected yet, using auto placement"
-            ),
-        },
-        Some(OutputPosition::LeftOf { left_of }) => match find(left_of) {
-            Some(rect) => return (rect.loc.x - size.w, rect.loc.y).into(),
-            None => warn!(
-                output = name,
-                left_of, "Reference output not connected yet, using auto placement"
-            ),
-        },
-        Some(OutputPosition::Above { above }) => match find(above) {
-            Some(rect) => return (rect.loc.x, rect.loc.y - size.h).into(),
-            None => warn!(
-                output = name,
-                above, "Reference output not connected yet, using auto placement"
-            ),
-        },
-        Some(OutputPosition::Below { below }) => match find(below) {
-            Some(rect) => return (rect.loc.x, rect.loc.y + rect.size.h).into(),
-            None => warn!(
-                output = name,
-                below, "Reference output not connected yet, using auto placement"
-            ),
-        },
-        None => {}
-    }
-
-    let x = placed
-        .iter()
-        .map(|(_, rect)| rect.loc.x + rect.size.w)
-        .max()
-        .unwrap_or(0);
-    (x, 0).into()
-}
-
 /// Whether workspaces are independent per output ("split") or shared across
 /// every connected output ("combined", i.e. switching workspaces moves every
 /// monitor to the same slot at once, GNOME-style).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceMode {
     #[default]
@@ -192,7 +89,7 @@ pub enum WorkspaceMode {
 /// Workspace settings: how many virtual desktops exist, whether outputs
 /// share them or each gets their own, and whether the on-screen dot
 /// indicator (shown briefly on switch) is enabled.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct WorkspaceSettings {
     pub mode: WorkspaceMode,
@@ -208,11 +105,21 @@ pub struct WorkspaceSettings {
     pub overlay: bool,
 }
 
-/// Mouse cursor theme settings, passed to the `xcursor` crate the same way
-/// the `XCURSOR_THEME`/`XCURSOR_SIZE` environment variables are: `None`
-/// means "fall back to that environment variable, or its own built-in
-/// default if that isn't set either".
-#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
+impl Default for WorkspaceSettings {
+    fn default() -> Self {
+        WorkspaceSettings {
+            mode: WorkspaceMode::default(),
+            count: 4,
+            dynamic: false,
+            overlay: true,
+        }
+    }
+}
+
+/// Mouse cursor theme settings: `None` means "fall back to the
+/// `XCURSOR_THEME`/`XCURSOR_SIZE` environment variable, or the compositor's
+/// own built-in default if that isn't set either".
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 #[serde(default)]
 pub struct CursorSettings {
     pub theme: Option<String>,
@@ -220,7 +127,7 @@ pub struct CursorSettings {
 }
 
 /// Background blur shown through translucent application surfaces.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct BlurSettings {
     pub enabled: bool,
@@ -237,10 +144,10 @@ impl Default for BlurSettings {
     }
 }
 
-/// Rounded corners on window content, drawn via a GLES shader (see
-/// `rounded_corners`). Off by default, matching the sharp-cornered windows
-/// this compositor had before the feature existed.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+/// Rounded corners on window content, drawn via a GLES shader. Off by
+/// default, matching the sharp-cornered windows this compositor had before
+/// the feature existed.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct CornersSettings {
     pub enabled: bool,
@@ -259,7 +166,7 @@ impl Default for CornersSettings {
 
 /// Pointer/keyboard-focus interaction. Both default off, matching the
 /// click-to-focus behavior this compositor had before either existed.
-#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 #[serde(default)]
 pub struct FocusSettings {
     /// If true, moving the pointer over a window focuses it, without
@@ -273,29 +180,19 @@ pub struct FocusSettings {
     pub mouse_follows_focus: bool,
 }
 
-impl Default for WorkspaceSettings {
-    fn default() -> Self {
-        WorkspaceSettings {
-            mode: WorkspaceMode::default(),
-            count: 4,
-            dynamic: false,
-            overlay: true,
-        }
-    }
+/// GUI/CLI-only appearance state: the compositor itself has no notion of a
+/// color scheme, so this isn't part of [`Config`] - the compositor's
+/// [`RawConfig`]-equivalent parser simply ignores an `[appearance]` table it
+/// doesn't know about. Kept in the same `config.toml` purely so a dark/light
+/// mode toggle (in `ironlandctl` or the settings GUI) remembers its state
+/// across runs.
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
+#[serde(default)]
+pub struct AppearanceSettings {
+    pub dark_mode: bool,
 }
 
-/// A single parsed keybinding: the modifiers/key it fires on, and the name
-/// of the action to run (looked up against the compositor's own action
-/// table, since the set of possible actions is compositor-specific and this
-/// module only knows about parsing).
-#[derive(Debug, Clone)]
-pub struct Keybinding {
-    pub modifiers: KeyModifiers,
-    pub keysym: Keysym,
-    pub action: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(default)]
 struct RawConfig {
     keyboard: KeyboardSettings,
@@ -313,7 +210,7 @@ struct RawConfig {
     workspaces: WorkspaceSettings,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     pub keyboard: KeyboardSettings,
     pub terminal: String,
@@ -323,8 +220,7 @@ pub struct Config {
     pub file_manager: String,
     /// Whether windows may get a compositor-drawn header bar ("top bar") for
     /// server-side decoration. Off by default: a client's request for
-    /// server-side decoration is overridden back to client-side (see
-    /// [`crate::state::AnvilState`]'s `XdgDecorationHandler` impl), so no
+    /// server-side decoration is overridden back to client-side, so no
     /// header bar is drawn regardless of what individual clients ask for.
     pub top_bar: bool,
     /// Path to an image file (PNG/JPEG/WebP) to use as the desktop
@@ -372,6 +268,17 @@ impl Default for Config {
     }
 }
 
+/// [`Config`] plus the GUI/CLI-only [`AppearanceSettings`], as it round-trips
+/// through `config.toml` end to end. `ironlandctl`'s `show --json`/
+/// `defaults --json`/`apply` and the settings GUI all speak this shape.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct FullConfig {
+    #[serde(flatten)]
+    pub config: Config,
+    #[serde(default)]
+    pub appearance: AppearanceSettings,
+}
+
 fn default_terminal() -> String {
     "weston-terminal".to_string()
 }
@@ -387,7 +294,7 @@ fn default_file_manager() -> String {
 /// The shortcuts the compositor shipped with before it became configurable.
 /// Kept as the baseline so an empty/missing/partial config file still
 /// behaves exactly as before.
-fn default_shortcuts() -> HashMap<String, Vec<String>> {
+pub fn default_shortcuts() -> HashMap<String, Vec<String>> {
     [
         ("quit", vec!["super+alt+backspace", "super+q"]),
         ("run_terminal", vec!["super+c"]),
@@ -442,8 +349,9 @@ fn default_shortcuts() -> HashMap<String, Vec<String>> {
     .collect()
 }
 
-/// All action names the compositor understands, for validation and for the
-/// settings GUI. Kept next to `default_shortcuts` so the two can't drift.
+/// All action names the compositor understands, for validation and for
+/// `ironlandctl`/the settings GUI. Kept next to `default_shortcuts` so the
+/// two can't drift.
 pub fn known_actions() -> Vec<&'static str> {
     [
         "quit",
@@ -481,31 +389,45 @@ pub fn known_actions() -> Vec<&'static str> {
 
 /// True for an action name of the form `"shortcut:<name>"`, the escape
 /// hatch that lets `[shortcuts]` bind a key to an `ironland-shortcuts-v1`
-/// name (see `crate::shortcuts`) instead of one of the compositor's own
-/// fixed [`known_actions`]. Kept separate from `known_actions` since the
-/// set of valid `<name>`s is whatever a client has registered at runtime,
-/// not something this module can enumerate.
-fn is_shortcut_action(action: &str) -> bool {
+/// name instead of one of the compositor's own fixed [`known_actions`].
+/// Kept separate from `known_actions` since the set of valid `<name>`s is
+/// whatever a client has registered at runtime, not something this module
+/// can enumerate.
+pub fn is_shortcut_action(action: &str) -> bool {
     action.starts_with("shortcut:")
 }
 
-fn config_search_path() -> Vec<PathBuf> {
+/// The paths the compositor (and `ironlandctl`) check for a config file, in
+/// priority order: an explicit test override, the user's own config, then
+/// the system-wide file a NixOS module may have written.
+pub fn config_search_path() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
     if let Ok(explicit) = env::var("IRONLAND_COMPOSITOR_CONFIG") {
         paths.push(PathBuf::from(explicit));
     }
 
-    let config_home = env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|_| env::var("HOME").map(|home| PathBuf::from(home).join(".config")));
-    if let Ok(config_home) = config_home {
-        paths.push(config_home.join("ironland-compositor/config.toml"));
+    if let Some(user_path) = user_config_path() {
+        paths.push(user_path);
     }
 
     paths.push(PathBuf::from("/etc/ironland-compositor/config.toml"));
 
     paths
+}
+
+/// Where a user's own config lives: `$XDG_CONFIG_HOME/ironland-compositor/
+/// config.toml`, falling back to `~/.config/...`. This is deliberately the
+/// same path regardless of `$IRONLAND_COMPOSITOR_CONFIG` - that variable is
+/// an explicit override for reads (mainly for testing), not somewhere a
+/// normal user's edits (via `ironlandctl` or the settings GUI) should land.
+/// `None` only if neither `XDG_CONFIG_HOME` nor `HOME` is set.
+pub fn user_config_path() -> Option<PathBuf> {
+    let config_home = env::var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|_| env::var("HOME").map(|home| PathBuf::from(home).join(".config")))
+        .ok()?;
+    Some(config_home.join("ironland-compositor/config.toml"))
 }
 
 impl Config {
@@ -521,7 +443,7 @@ impl Config {
                 config
             }
             Err(err) => {
-                warn!(%err, "Failed to load compositor config, using defaults");
+                tracing::warn!(%err, "Failed to load compositor config, using defaults");
                 Config::default()
             }
         }
@@ -530,14 +452,16 @@ impl Config {
     /// Reads the current effective config without silently replacing a
     /// malformed file with defaults. Live reload uses this so a temporary
     /// typo never wipes the running configuration; it simply retries after
-    /// the next file change.
-    pub(crate) fn try_load() -> Result<(Config, Option<PathBuf>), String> {
+    /// the next file change. `ironlandctl` also uses this directly, to
+    /// surface a parse error instead of silently falling back like
+    /// [`Config::load`].
+    pub fn try_load() -> Result<(Config, Option<PathBuf>), String> {
         for path in config_search_path() {
             let contents = match fs::read_to_string(&path) {
                 Ok(contents) => contents,
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(err) => {
-                    warn!(path = %path.display(), %err, "Failed to read compositor config, skipping it");
+                    tracing::warn!(path = %path.display(), %err, "Failed to read compositor config, skipping it");
                     continue;
                 }
             };
@@ -589,205 +513,44 @@ impl Config {
             .find(|(_, settings)| settings.primary)
             .map(|(name, _)| name.as_str())
     }
-
-    /// Parses every configured binding into `(modifiers, keysym, action
-    /// name)` triples, skipping (with a warning) any binding that doesn't
-    /// parse or whose action name isn't recognized.
-    pub fn parsed_keybindings(&self) -> Vec<Keybinding> {
-        let known = known_actions();
-        let mut bindings = Vec::new();
-
-        for (action, specs) in &self.shortcuts {
-            if !known.contains(&action.as_str()) && !is_shortcut_action(action) {
-                warn!(action, "Unknown action in [shortcuts] config, ignoring");
-                continue;
-            }
-
-            for spec in specs {
-                // A bare modifier name (no `+`, e.g. `"super"`) isn't a
-                // modifiers+key combo at all - it's handled separately by
-                // `super_tap_action`, so skip it here rather than reporting
-                // it as an unparseable combo.
-                if is_bare_modifier_tap(spec) {
-                    continue;
-                }
-
-                match parse_binding(spec) {
-                    Some((modifiers, keysym)) => bindings.push(Keybinding {
-                        modifiers,
-                        keysym,
-                        action: action.clone(),
-                    }),
-                    None => warn!(action, spec, "Failed to parse keybinding, ignoring"),
-                }
-            }
-        }
-
-        bindings
-    }
-
-    /// The action bound to a bare Super key tap (pressed and released with no
-    /// other key in between - see `input_handler`'s tap tracking), if any is
-    /// configured. Only one action can meaningfully fire on a Super tap, so
-    /// if more than one action lists a bare `"super"` spec, the first found
-    /// (in arbitrary map order) wins and the rest are ignored with a warning.
-    pub fn super_tap_action(&self) -> Option<&str> {
-        let known = known_actions();
-        let mut found: Option<&str> = None;
-
-        for (action, specs) in &self.shortcuts {
-            if !specs.iter().any(|spec| is_bare_modifier_tap(spec)) {
-                continue;
-            }
-            if !known.contains(&action.as_str()) && !is_shortcut_action(action) {
-                warn!(action, "Unknown action bound to a bare Super tap, ignoring");
-                continue;
-            }
-            if let Some(existing) = found {
-                warn!(
-                    action,
-                    existing, "Multiple actions bound to a bare Super tap, ignoring this one"
-                );
-                continue;
-            }
-            found = Some(action.as_str());
-        }
-
-        found
-    }
 }
 
-/// Whether `spec` names a modifier on its own (no `+`), meaning "trigger on
-/// a tap of this modifier alone" rather than a modifiers+key combo. Only the
-/// Super/logo modifier is meaningful here today.
-fn is_bare_modifier_tap(spec: &str) -> bool {
-    matches!(
-        spec.trim().to_ascii_lowercase().as_str(),
-        "super" | "logo" | "meta" | "win"
-    )
-}
-
-/// Parses a binding spec like `"ctrl+shift+left"` into its modifiers and
-/// keysym. The last `+`-separated token is the key; everything before it is
-/// a modifier name (`ctrl`/`control`, `alt`, `shift`, `super`/`logo`/`meta`).
-pub fn parse_binding(spec: &str) -> Option<(KeyModifiers, Keysym)> {
-    let parts: Vec<&str> = spec
-        .split('+')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .collect();
-    let (mod_parts, key_part) = parts.split_last()?;
-
-    let mut modifiers = KeyModifiers::default();
-    for part in key_part {
-        match part.to_ascii_lowercase().as_str() {
-            "ctrl" | "control" => modifiers.ctrl = true,
-            "alt" => modifiers.alt = true,
-            "shift" => modifiers.shift = true,
-            "super" | "logo" | "meta" | "win" => modifiers.logo = true,
-            other => {
-                warn!(modifier = other, spec, "Unknown modifier in keybinding");
-                return None;
-            }
-        }
-    }
-
-    let keysym = parse_key_name(mod_parts, modifiers.shift)?;
-    Some((modifiers, keysym))
-}
-
-/// Resolves a key name to a keysym. Single ASCII letters are special-cased:
-/// xkb has distinct keysyms for the lower- and upper-case forms of a letter
-/// (`a` vs `A`), and it's the upper-case one that a physical key reports
-/// once `modified_sym()` has applied an active Shift — so a binding that
-/// asks for Shift always resolves the letter to its upper-case keysym,
-/// regardless of how the user cased it in the config.
-fn parse_key_name(name: &str, shift: bool) -> Option<Keysym> {
-    let mut chars = name.chars();
-    let keysym = match (chars.next(), chars.next()) {
-        (Some(c), None) if c.is_ascii_alphabetic() => {
-            let letter = if shift {
-                c.to_ascii_uppercase()
-            } else {
-                c.to_ascii_lowercase()
+impl AppearanceSettings {
+    /// Reads just the `[appearance]` table from the first config file found
+    /// on [`config_search_path`] - kept separate from [`Config::try_load`]
+    /// since the compositor's own schema has no notion of this table.
+    pub fn load() -> AppearanceSettings {
+        for path in config_search_path() {
+            let Ok(contents) = fs::read_to_string(&path) else {
+                continue;
             };
-            xkb::keysym_from_name(&letter.to_string(), xkb::KEYSYM_NO_FLAGS)
+            #[derive(Deserialize, Default)]
+            #[serde(default)]
+            struct WithAppearance {
+                appearance: AppearanceSettings,
+            }
+            return toml::from_str::<WithAppearance>(&contents)
+                .map(|w| w.appearance)
+                .unwrap_or_default();
         }
-        _ => xkb::keysym_from_name(name, xkb::KEYSYM_CASE_INSENSITIVE),
-    };
+        AppearanceSettings::default()
+    }
+}
 
-    if keysym.raw() == 0 {
-        None
-    } else {
-        Some(keysym)
+impl FullConfig {
+    /// The effective config plus appearance, exactly as `ironlandctl show`
+    /// and the settings GUI see it.
+    pub fn load() -> FullConfig {
+        FullConfig {
+            config: Config::load(),
+            appearance: AppearanceSettings::load(),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parses_simple_binding() {
-        let (mods, sym) = parse_binding("ctrl+q").unwrap();
-        assert_eq!(
-            mods,
-            KeyModifiers {
-                ctrl: true,
-                ..Default::default()
-            }
-        );
-        assert_eq!(sym, Keysym::q);
-    }
-
-    #[test]
-    fn shift_uppercases_letter_bindings() {
-        let (mods, sym) = parse_binding("ctrl+shift+m").unwrap();
-        assert!(mods.shift);
-        assert_eq!(sym, Keysym::M);
-    }
-
-    #[test]
-    fn parses_named_keys_case_insensitively() {
-        let (_, sym) = parse_binding("ctrl+RETURN").unwrap();
-        assert_eq!(sym, Keysym::Return);
-
-        let (_, sym) = parse_binding("ctrl+alt+backspace").unwrap();
-        assert_eq!(sym, Keysym::BackSpace);
-    }
-
-    #[test]
-    fn rejects_unknown_modifier() {
-        assert!(parse_binding("hyper+q").is_none());
-    }
-
-    #[test]
-    fn rejects_unknown_key() {
-        assert!(parse_binding("ctrl+notarealkey").is_none());
-    }
-
-    #[test]
-    fn every_default_shortcut_parses() {
-        for (action, specs) in default_shortcuts() {
-            for spec in specs {
-                if is_bare_modifier_tap(&spec) {
-                    continue;
-                }
-                assert!(
-                    parse_binding(&spec).is_some(),
-                    "default binding {action}={spec} failed to parse"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn default_shell_launcher_is_a_bare_super_tap() {
-        assert_eq!(
-            Config::default().super_tap_action(),
-            Some("shortcut:launcher")
-        );
-    }
 
     #[test]
     fn partial_shortcuts_override_only_the_named_action() {
@@ -816,20 +579,13 @@ mod tests {
         assert_eq!(merged["toggle_launcher"], vec!["ctrl+space"]);
     }
 
-    fn size(w: i32, h: i32) -> Size<i32, Logical> {
-        (w, h).into()
-    }
-
-    fn rect(x: i32, y: i32, w: i32, h: i32) -> Rectangle<i32, Logical> {
-        Rectangle::new((x, y).into(), (w, h).into())
-    }
-
     #[test]
     fn unknown_tables_are_ignored() {
-        // `[appearance]` is written by the settings GUI for its own
-        // dark-mode toggle, which the compositor itself has no use for.
-        // Serde's default behavior (no `deny_unknown_fields`) is what makes
-        // this safe to add there without needing a matching field here.
+        // `[appearance]` is written by `ironlandctl`/the settings GUI for
+        // their own dark-mode toggle, which the compositor itself has no
+        // use for. Serde's default behavior (no `deny_unknown_fields`) is
+        // what makes this safe to add there without needing a matching
+        // field in `RawConfig`.
         let raw: Result<RawConfig, _> = toml::from_str("[appearance]\ndark_mode = true\n");
         assert!(raw.is_ok(), "unexpected parse error: {:?}", raw.err());
     }
@@ -876,79 +632,6 @@ mod tests {
             Some(OutputPosition::Absolute { x: 100, y: 200 })
         );
         assert!(raw.outputs["eDP-1"].primary);
-    }
-
-    #[test]
-    fn auto_placement_stacks_to_the_right() {
-        let settings = OutputSettings::default();
-        let placed = [("eDP-1".to_string(), rect(0, 0, 1920, 1080))];
-        let pos = resolve_output_position(&settings, "HDMI-A-1", size(1920, 1080), &placed);
-        assert_eq!(pos, (1920, 0).into());
-    }
-
-    #[test]
-    fn relative_positions_place_next_to_target() {
-        let placed = [("eDP-1".to_string(), rect(0, 0, 1920, 1080))];
-
-        let right = OutputSettings {
-            position: Some(OutputPosition::RightOf {
-                right_of: "eDP-1".to_string(),
-            }),
-            ..Default::default()
-        };
-        assert_eq!(
-            resolve_output_position(&right, "b", size(800, 600), &placed),
-            (1920, 0).into()
-        );
-
-        let left = OutputSettings {
-            position: Some(OutputPosition::LeftOf {
-                left_of: "eDP-1".to_string(),
-            }),
-            ..Default::default()
-        };
-        assert_eq!(
-            resolve_output_position(&left, "b", size(800, 600), &placed),
-            (-800, 0).into()
-        );
-
-        let above = OutputSettings {
-            position: Some(OutputPosition::Above {
-                above: "eDP-1".to_string(),
-            }),
-            ..Default::default()
-        };
-        assert_eq!(
-            resolve_output_position(&above, "b", size(800, 600), &placed),
-            (0, -600).into()
-        );
-
-        let below = OutputSettings {
-            position: Some(OutputPosition::Below {
-                below: "eDP-1".to_string(),
-            }),
-            ..Default::default()
-        };
-        assert_eq!(
-            resolve_output_position(&below, "b", size(800, 600), &placed),
-            (0, 1080).into()
-        );
-    }
-
-    #[test]
-    fn mirror_of_takes_priority_over_position() {
-        let placed = [("eDP-1".to_string(), rect(0, 0, 1920, 1080))];
-        let settings = OutputSettings {
-            mirror_of: Some("eDP-1".to_string()),
-            position: Some(OutputPosition::RightOf {
-                right_of: "eDP-1".to_string(),
-            }),
-            ..Default::default()
-        };
-        assert_eq!(
-            resolve_output_position(&settings, "HDMI-A-1", size(1920, 1080), &placed),
-            (0, 0).into()
-        );
     }
 
     #[test]
@@ -1047,17 +730,13 @@ mod tests {
     }
 
     #[test]
-    fn missing_reference_output_falls_back_to_auto_placement() {
-        let placed = [("eDP-1".to_string(), rect(0, 0, 1920, 1080))];
-        let settings = OutputSettings {
-            position: Some(OutputPosition::RightOf {
-                right_of: "not-connected".to_string(),
-            }),
-            ..Default::default()
+    fn full_config_round_trips_through_json() {
+        let full = FullConfig {
+            config: Config::default(),
+            appearance: AppearanceSettings { dark_mode: true },
         };
-        assert_eq!(
-            resolve_output_position(&settings, "b", size(800, 600), &placed),
-            (1920, 0).into()
-        );
+        let json = serde_json::to_string(&full).unwrap();
+        let back: FullConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(full, back);
     }
 }

@@ -1,3 +1,13 @@
+[workspace]
+members = ["ironland-config", "ironlandctl"]
+# `cargo build`/`cargo test` with no `-p`/`--workspace` only builds the
+# default members; since this manifest is both the workspace root and the
+# `ironland-compositor` package, that would otherwise mean just the
+# compositor itself. List `ironlandctl` too so `nix build` (crane's plain
+# `cargo build .`) produces it as well, without every other cargo
+# invocation needing an explicit `--workspace` or `-p`.
+default-members = [".", "ironlandctl"]
+
 [package]
 name = "ironland-compositor"
 version = "0.1.0"
@@ -28,6 +38,7 @@ name = "ironland-portal-global-shortcuts"
 path = "src/bin/ironland_portal_global_shortcuts.rs"
 
 [dependencies]
+ironland-config = { path = "ironland-config" }
 zbus = "4"
 async-io = "2"
 bitflags = "2.2.1"

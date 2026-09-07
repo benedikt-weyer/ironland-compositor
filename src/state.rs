@@ -222,13 +222,13 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     /// Resolved keybinding table, built once at startup from `config::Config`
     /// (see `input_handler::compile_keybindings`).
     pub(crate) keybindings: Vec<(
-        crate::config::KeyModifiers,
+        crate::keybindings::KeyModifiers,
         Keysym,
         crate::input_handler::KeyAction,
     )>,
 
     /// Action to fire when the Super key is tapped alone (see
-    /// `config::Config::super_tap_action`), if one is configured.
+    /// `keybindings::super_tap_action`), if one is configured.
     pub(crate) super_tap_action: Option<crate::input_handler::KeyAction>,
     /// `Some(true)` while Super is held and no other key has been pressed
     /// since, meaning it's still a candidate bare tap; `Some(false)` once
@@ -853,7 +853,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         let mut seat = seat_state.new_wl_seat(&dh, seat_name.clone());
 
         let pointer = seat.add_pointer();
-        seat.add_keyboard(config.keyboard.to_xkb_config(), 200, 25)
+        seat.add_keyboard(crate::keybindings::to_xkb_config(&config.keyboard), 200, 25)
             .expect("Failed to initialize the keyboard");
 
         let keyboard_shortcuts_inhibit_state = KeyboardShortcutsInhibitState::new::<Self>(&dh);
@@ -959,7 +959,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         if new_config.keyboard != old_config.keyboard {
             let keyboard_settings = new_config.keyboard.clone();
             if let Some(keyboard) = self.seat.get_keyboard()
-                && let Err(err) = keyboard.set_xkb_config(self, keyboard_settings.to_xkb_config())
+                && let Err(err) = keyboard.set_xkb_config(self, crate::keybindings::to_xkb_config(&keyboard_settings))
             {
                 warn!(
                     ?err,
@@ -1043,7 +1043,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             // member with the normal fallback, then the remainder can follow.
             let output = pending.remove(ready.unwrap_or(0));
             let geometry = self.space.output_geometry(&output).unwrap_or_default();
-            let position = crate::config::resolve_output_position(
+            let position = crate::keybindings::resolve_output_position(
                 &self.config.output_settings(&output.name()),
                 &output.name(),
                 geometry.size,

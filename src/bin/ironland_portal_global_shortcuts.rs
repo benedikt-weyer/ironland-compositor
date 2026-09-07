@@ -15,7 +15,7 @@
 //!
 //! This backend has no shortcut-editor UI. A `BindShortcuts` request for a
 //! shortcut with no usable `preferred_trigger` option (missing, or not
-//! parseable by [`ironland_compositor::config::parse_binding`]'s syntax,
+//! parseable by [`ironland_compositor::keybindings::parse_binding`]'s syntax,
 //! e.g. `"ctrl+alt+t"`) is accepted but left untriggered - it's listed by
 //! `ListShortcuts`/`ShortcutsChanged` with an empty `trigger_description`
 //! and simply never activates. A future version could add a real
@@ -48,7 +48,7 @@ use zbus::interface;
 use zbus::object_server::SignalContext;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 
-use ironland_compositor::config::{KeyModifiers, parse_binding};
+use ironland_compositor::keybindings::{KeyModifiers, parse_binding};
 
 /// Generated client bindings for `ironland-shortcuts-v1` (see
 /// `protocols/ironland-shortcuts-v1.xml`) - not in the `wayland-protocols`

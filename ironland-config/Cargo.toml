@@ -1,0 +1,12 @@
+[package]
+name = "ironland-config"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Pure config schema and file I/O for ironland-compositor's config.toml, shared by the compositor, ironlandctl, and gui-settings."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+tracing = "0.1"

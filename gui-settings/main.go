@@ -24,7 +24,10 @@ func main() {
 	a := app.NewWithID("dev.ironland.compositor-settings")
 	w := a.NewWindow("ironland-compositor Settings")
 
-	cfg, loadedFrom := loadConfig()
+	cfg, loadedFrom, err := loadConfig()
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("loading settings via ironlandctl: %w\n\nIs ironlandctl installed and on PATH?", err), w)
+	}
 
 	keyboardTab := buildKeyboardTab(&cfg)
 	shortcutsTab := buildShortcutsTab(&cfg)

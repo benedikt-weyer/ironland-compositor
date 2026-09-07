@@ -1,10 +1,22 @@
 package main
 
 import (
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
 )
+
+// requireIronlandctl skips the calling test unless a real `ironlandctl`
+// binary is on PATH: loadConfig/saveConfig/defaultConfig now shell out to
+// it (see ironlandctl.go), so a round-trip test genuinely needs the real
+// thing rather than a Go-side reimplementation of its logic.
+func requireIronlandctl(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath(ironlandctlBinary); err != nil {
+		t.Skipf("ironlandctl not found on PATH (%v); build it with `cargo build -p ironlandctl` in ../.. and add it to PATH", err)
+	}
+}
 
 func TestSplitKeyCombos(t *testing.T) {
 	got := splitKeyCombos(" ctrl+q, ctrl+alt+backspace ,, ")
@@ -15,6 +27,7 @@ func TestSplitKeyCombos(t *testing.T) {
 }
 
 func TestSaveThenLoadRoundTrips(t *testing.T) {
+	requireIronlandctl(t)
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("IRONLAND_COMPOSITOR_CONFIG", "")
@@ -40,7 +53,10 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 		t.Fatalf("saveConfig path = %q, want %q", path, want)
 	}
 
-	loaded, loadedFrom := loadConfig()
+	loaded, loadedFrom, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
 	if loadedFrom != path {
 		t.Fatalf("loadConfig loadedFrom = %q, want %q", loadedFrom, path)
 	}
@@ -102,11 +118,15 @@ func TestEqualStrings(t *testing.T) {
 }
 
 func TestLoadConfigWithNoFileReturnsDefaults(t *testing.T) {
+	requireIronlandctl(t)
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("IRONLAND_COMPOSITOR_CONFIG", "")
 
-	cfg, loadedFrom := loadConfig()
+	cfg, loadedFrom, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
 	if loadedFrom != "" {
 		t.Fatalf("loadedFrom = %q, want empty", loadedFrom)
 	}

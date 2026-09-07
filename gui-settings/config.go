@@ -1,128 +1,153 @@
+// Package main: gui-settings' own Config/OutputSettings/etc. types mirror
+// `ironland_config::{Config, OutputSettings, ...}` (see
+// ../ironland-config/src/lib.rs) field-for-field, purely so the rest of this
+// GUI has typed values to bind widgets to. Persistence itself - loading the
+// effective config, saving edits - is delegated entirely to `ironlandctl`
+// (see ironlandctl.go): this file has no TOML/file-reading code of its own,
+// so the schema and the merge-with-defaults logic can't drift between the
+// two.
 package main
 
-import (
-	"os"
-	"path/filepath"
+import "encoding/json"
 
-	"github.com/BurntSushi/toml"
-)
-
-// KeyboardSettings mirrors `config::KeyboardSettings` in the compositor
-// (src/config.rs): fields are passed straight through to xkbcommon, and an
-// empty string means "let xkbcommon fall back to its XKB_DEFAULT_* env vars
-// / built-in default".
+// KeyboardSettings mirrors `ironland_config::KeyboardSettings`: fields are
+// passed straight through to xkbcommon, and an empty string means "let
+// xkbcommon fall back to its XKB_DEFAULT_* env vars / built-in default".
 type KeyboardSettings struct {
-	Rules   string `toml:"rules"`
-	Model   string `toml:"model"`
-	Layout  string `toml:"layout"`
-	Variant string `toml:"variant"`
-	Options string `toml:"options"`
+	Rules   string `json:"rules"`
+	Model   string `json:"model"`
+	Layout  string `json:"layout"`
+	Variant string `json:"variant"`
+	Options string `json:"options"`
 }
 
 // AppearanceSettings is GUI-only state: the compositor itself has no notion
-// of a color scheme, so this isn't mirrored in config::Config on the Rust
-// side (its TOML parser ignores tables it doesn't know about). It's kept in
-// the same config.toml purely so the GUI remembers the toggle across runs.
+// of a color scheme, so this isn't part of `ironland_config::Config` (its
+// TOML parser ignores tables it doesn't know about) - `ironland_config`
+// carries it separately, alongside Config, purely so config.toml remembers
+// this toggle across runs.
 type AppearanceSettings struct {
-	DarkMode bool `toml:"dark_mode"`
+	DarkMode bool `json:"dark_mode"`
 }
 
 type BlurSettings struct {
-	Enabled bool `toml:"enabled"`
-	Radius  int  `toml:"radius"`
+	Enabled bool `json:"enabled"`
+	Radius  int  `json:"radius"`
 }
 
-// CornersSettings mirrors `config::CornersSettings` in the compositor:
-// rounded corners on window content, drawn via a GLES shader.
+// CornersSettings mirrors `ironland_config::CornersSettings`: rounded
+// corners on window content, drawn via a GLES shader.
 type CornersSettings struct {
-	Enabled bool `toml:"enabled"`
-	Radius  int  `toml:"radius"`
+	Enabled bool `json:"enabled"`
+	Radius  int  `json:"radius"`
 }
 
-// CursorSettings mirrors `config::CursorSettings` in the compositor: an
-// empty Theme, or a Size of 0, means "fall back to the XCURSOR_THEME/
-// XCURSOR_SIZE environment variables, or the compositor's own built-in
-// default if those aren't set either".
+// CursorSettings mirrors `ironland_config::CursorSettings`: an empty Theme,
+// or a Size of 0, means "fall back to the XCURSOR_THEME/XCURSOR_SIZE
+// environment variables, or the compositor's own built-in default if those
+// aren't set either".
 type CursorSettings struct {
-	Theme string `toml:"theme,omitempty"`
-	Size  int    `toml:"size,omitempty"`
+	Theme string `json:"theme"`
+	Size  int    `json:"size"`
 }
 
-// WorkspaceSettings mirrors `config::WorkspaceSettings` in the compositor:
-// how many virtual desktops exist, whether each output gets its own set or
-// every output shares one, whether the count grows/shrinks on demand, and
-// whether the on-screen dot indicator flashes on switch.
+// WorkspaceSettings mirrors `ironland_config::WorkspaceSettings`: how many
+// virtual desktops exist, whether each output gets its own set or every
+// output shares one, whether the count grows/shrinks on demand, and whether
+// the on-screen dot indicator flashes on switch.
 type WorkspaceSettings struct {
 	// Mode is either "per_monitor" (each output has its own workspaces) or
 	// "combined" (every output shows the same workspace at once).
-	Mode    string `toml:"mode"`
-	Count   int    `toml:"count"`
-	Dynamic bool   `toml:"dynamic"`
-	Overlay bool   `toml:"overlay"`
+	Mode    string `json:"mode"`
+	Count   int    `json:"count"`
+	Dynamic bool   `json:"dynamic"`
+	Overlay bool   `json:"overlay"`
 }
 
-// FocusSettings mirrors `config::FocusSettings` in the compositor: both
-// default off, matching the click-to-focus behavior from before either
-// existed.
+// FocusSettings mirrors `ironland_config::FocusSettings`: both default off,
+// matching the click-to-focus behavior from before either existed.
 type FocusSettings struct {
 	// FollowsMouse, if true, focuses whatever window the pointer is over
 	// without needing a click (hovering empty space leaves the current
 	// focus alone).
-	FollowsMouse bool `toml:"follows_mouse"`
+	FollowsMouse bool `json:"follows_mouse"`
 	// MouseFollowsFocus, if true, warps the pointer to the center of a
 	// window whenever it's focused by something other than the pointer
 	// itself (switching workspaces, cycling windows, a newly opened
 	// window, activating a window from the dock).
-	MouseFollowsFocus bool `toml:"mouse_follows_focus"`
+	MouseFollowsFocus bool `json:"mouse_follows_focus"`
 }
 
-// Config mirrors `config::Config` / `config::RawConfig` in the compositor,
-// plus the GUI-only Appearance settings above.
+// Config mirrors `ironland_config::FullConfig` field-for-field (its own
+// `#[serde(flatten)]` on the inner `Config` puts these fields at the top
+// level, alongside Appearance) - see `ironlandctl show --json`.
 type Config struct {
-	Keyboard    KeyboardSettings `toml:"keyboard"`
-	Terminal    string           `toml:"terminal"`
-	Browser     string           `toml:"browser"`
-	FileManager string           `toml:"file_manager"`
+	Keyboard    KeyboardSettings `json:"keyboard"`
+	Terminal    string           `json:"terminal"`
+	Browser     string           `json:"browser"`
+	FileManager string           `json:"file_manager"`
 	// TopBar controls whether windows may get a compositor-drawn header
 	// bar for server-side decoration. Off by default: a client's request
 	// for server-side decoration is overridden back to client-side.
-	TopBar bool `toml:"top_bar"`
+	TopBar bool `json:"top_bar"`
 	// Wallpaper is a path to an image file (PNG/JPEG/WebP) used as the
 	// desktop background, scaled and center-cropped to cover each output.
 	// Empty uses the compositor's built-in default wallpaper.
-	Wallpaper  string                    `toml:"wallpaper,omitempty"`
-	Blur       BlurSettings              `toml:"blur"`
-	Corners    CornersSettings           `toml:"corners"`
-	Cursor     CursorSettings            `toml:"cursor"`
-	Focus      FocusSettings             `toml:"focus"`
-	Appearance AppearanceSettings        `toml:"appearance"`
-	Shortcuts  map[string][]string       `toml:"shortcuts"`
-	Outputs    map[string]OutputSettings `toml:"outputs"`
-	Workspaces WorkspaceSettings         `toml:"workspaces"`
+	Wallpaper  string                    `json:"wallpaper"`
+	Blur       BlurSettings              `json:"blur"`
+	Corners    CornersSettings           `json:"corners"`
+	Cursor     CursorSettings            `json:"cursor"`
+	Focus      FocusSettings             `json:"focus"`
+	Appearance AppearanceSettings        `json:"appearance"`
+	Shortcuts  map[string][]string       `json:"shortcuts"`
+	Outputs    map[string]OutputSettings `json:"outputs"`
+	Workspaces WorkspaceSettings         `json:"workspaces"`
 }
 
-// OutputPosition mirrors `config::OutputPosition` in the compositor: exactly
-// one of RightOf/LeftOf/Above/Below (each another output's connector name)
-// or X/Y (an absolute logical position) should be set. It's kept flat
-// rather than as a Go-level tagged union because that's how it round-trips
-// through TOML into Rust's `#[serde(untagged)]` enum: only the keys present
-// in the table matter, and `omitempty` keeps the others out of the file.
+// OutputPosition mirrors `ironland_config::OutputPosition`: exactly one of
+// RightOf/LeftOf/Above/Below (each another output's connector name) or X/Y
+// (an absolute logical position) should be set. It's kept flat rather than
+// as a Go-level tagged union because that's how it round-trips through JSON
+// into Rust's `#[serde(untagged)]` enum: only the keys present in the
+// object matter, and `omitempty` keeps the others out.
 type OutputPosition struct {
-	RightOf string `toml:"right_of,omitempty"`
-	LeftOf  string `toml:"left_of,omitempty"`
-	Above   string `toml:"above,omitempty"`
-	Below   string `toml:"below,omitempty"`
-	X       *int   `toml:"x,omitempty"`
-	Y       *int   `toml:"y,omitempty"`
+	RightOf string `json:"right_of,omitempty"`
+	LeftOf  string `json:"left_of,omitempty"`
+	Above   string `json:"above,omitempty"`
+	Below   string `json:"below,omitempty"`
+	X       *int   `json:"x,omitempty"`
+	Y       *int   `json:"y,omitempty"`
 }
 
-// OutputSettings mirrors `config::OutputSettings` in the compositor, keyed
-// by connector name (e.g. "eDP-1", "HDMI-A-1") in Config.Outputs.
+// OutputSettings mirrors `ironland_config::OutputSettings`, keyed by
+// connector name (e.g. "eDP-1", "HDMI-A-1") in Config.Outputs.
 type OutputSettings struct {
-	Primary     bool            `toml:"primary,omitempty"`
-	RefreshRate int             `toml:"refresh_rate,omitempty"`
-	MirrorOf    string          `toml:"mirror_of,omitempty"`
-	Position    *OutputPosition `toml:"position,omitempty"`
+	Primary     bool            `json:"primary,omitempty"`
+	RefreshRate int             `json:"refresh_rate,omitempty"`
+	MirrorOf    string          `json:"mirror_of,omitempty"`
+	Position    *OutputPosition `json:"position,omitempty"`
+}
+
+// MarshalJSON round-trips RefreshRate/MirrorOf/Position as JSON
+// null/absent rather than Go's zero values, matching what `ironlandctl`
+// expects for "no override" (its own Option<..> fields serialize the same
+// way) - encoding/json's `omitempty` alone can't do this for a 0 that's a
+// meaningful value elsewhere, so this is spelled out explicitly.
+func (s OutputSettings) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		Primary     bool            `json:"primary"`
+		RefreshRate *int            `json:"refresh_rate"`
+		MirrorOf    *string         `json:"mirror_of"`
+		Position    *OutputPosition `json:"position"`
+	}
+	w := wire{Primary: s.Primary, Position: s.Position}
+	if s.RefreshRate != 0 {
+		w.RefreshRate = &s.RefreshRate
+	}
+	if s.MirrorOf != "" {
+		w.MirrorOf = &s.MirrorOf
+	}
+	return json.Marshal(w)
 }
 
 // knownActions lists every action the compositor recognizes in
@@ -229,190 +254,57 @@ func advertisedEventLabel(name string) string {
 }
 
 // defaultShortcuts is the baseline the compositor falls back to for any
-// action not overridden in the config file. Mirrors
-// `config::default_shortcuts` in src/config.rs.
+// action not overridden in the config file. Fetched from `ironlandctl`
+// (see ironlandctl.go) rather than hardcoded here, so it can't drift from
+// `ironland_config::default_shortcuts`.
 func defaultShortcuts() map[string][]string {
-	return map[string][]string{
-		"quit":                 {"super+alt+backspace", "super+q"},
-		"run_terminal":         {"super+c"},
-		"toggle_launcher":      {"ctrl+space"},
-		"shortcut:launcher":    {"super"},
-		"open_browser":         {"super+b"},
-		"open_file_manager":    {"super+f"},
-		"toggle_floating":      {"super+shift+space"},
-		"kill_window":          {"super+x"},
-		"focus_left":           {"super+ctrl+left"},
-		"focus_right":          {"super+ctrl+right"},
-		"focus_up":             {"super+up"},
-		"focus_down":           {"super+down"},
-		"swap_left":            {"super+shift+left"},
-		"swap_right":           {"super+shift+right"},
-		"swap_up":              {"super+shift+up"},
-		"swap_down":            {"super+shift+down"},
-		"resize_left":          {"super+ctrl+shift+left"},
-		"resize_right":         {"super+ctrl+shift+right"},
-		"resize_up":            {"super+alt+up"},
-		"resize_down":          {"super+alt+down"},
-		"workspace_left":       {"super+left"},
-		"workspace_right":      {"super+right"},
-		"move_workspace_left":  {"super+alt+left"},
-		"move_workspace_right": {"super+alt+right"},
-		"scale_up":             {"super+shift+p"},
-		"scale_down":           {"super+shift+m"},
-		"toggle_preview":       {"super+shift+w"},
-		"rotate_output":        {"super+shift+r"},
-		"toggle_tint":          {"super+shift+t"},
-		"toggle_decorations":   {"super+shift+d"},
-	}
+	return defaultConfig().Shortcuts
 }
 
 func defaultWorkspaceSettings() WorkspaceSettings {
-	return WorkspaceSettings{
-		Mode:    "per_monitor",
-		Count:   4,
-		Dynamic: false,
-		Overlay: true,
-	}
+	return defaultConfig().Workspaces
 }
 
+// defaultConfig returns ironlandctl's built-in defaults (`ironlandctl
+// defaults --json`). Each settings tab asks for its own copy at build time,
+// purely to compute its "differs from default" reset affordances - a fresh
+// call each time (rather than a cached one) sidesteps having to deep-copy
+// Config's maps before handing them to a caller that mutates its own copy.
 func defaultConfig() Config {
-	return Config{
-		Terminal:    "weston-terminal",
-		Browser:     "brave",
-		FileManager: "iron-file",
-		Blur:        BlurSettings{Radius: 12},
-		Corners:     CornersSettings{Radius: 12},
-		Shortcuts:   defaultShortcuts(),
-		Outputs:     map[string]OutputSettings{},
-		Workspaces:  defaultWorkspaceSettings(),
+	cfg, err := ironlandctlDefaults()
+	if err != nil {
+		// No sensible fallback here that wouldn't reintroduce the exact
+		// schema duplication this delegation is meant to avoid; an empty
+		// Config at least keeps every widget's zero-value/maps non-nil so
+		// the GUI doesn't panic before the caller's own error dialog (see
+		// loadConfig/saveConfig) is shown.
+		return Config{Shortcuts: map[string][]string{}, Outputs: map[string]OutputSettings{}}
 	}
-}
-
-// userConfigPath is where this GUI saves settings: the same
-// `$XDG_CONFIG_HOME`/`~/.config` location the compositor checks before
-// falling back to `/etc/ironland-compositor/config.toml`, and one a normal
-// user can write without root.
-func userConfigPath() (string, error) {
-	configHome := os.Getenv("XDG_CONFIG_HOME")
-	if configHome == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		configHome = filepath.Join(home, ".config")
-	}
-	return filepath.Join(configHome, "ironland-compositor", "config.toml"), nil
-}
-
-// configSearchPath mirrors `config::config_search_path` in src/config.rs:
-// the same explicit-override env var, the same user config path, then the
-// system-wide file the NixOS module writes.
-func configSearchPath() []string {
-	var paths []string
-	if explicit := os.Getenv("IRONLAND_COMPOSITOR_CONFIG"); explicit != "" {
-		paths = append(paths, explicit)
-	}
-	if userPath, err := userConfigPath(); err == nil {
-		paths = append(paths, userPath)
-	}
-	paths = append(paths, "/etc/ironland-compositor/config.toml")
-	return paths
+	return cfg
 }
 
 // loadConfig returns the settings that would be active if the compositor
-// started right now (the first config file found on configSearchPath,
-// merged over the built-in defaults), plus the path it came from - or ""
-// if none of the candidate files exist yet.
-func loadConfig() (Config, string) {
-	cfg := defaultConfig()
-
-	for _, path := range configSearchPath() {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-
-		var raw Config
-		if _, err := toml.Decode(string(data), &raw); err != nil {
-			// Malformed file: same as the compositor, fall back to defaults
-			// rather than erroring out.
-			return defaultConfig(), ""
-		}
-
-		if raw.Terminal != "" {
-			cfg.Terminal = raw.Terminal
-		}
-		if raw.Browser != "" {
-			cfg.Browser = raw.Browser
-		}
-		if raw.FileManager != "" {
-			cfg.FileManager = raw.FileManager
-		}
-		cfg.TopBar = raw.TopBar
-		cfg.Wallpaper = raw.Wallpaper
-		cfg.Blur.Enabled = raw.Blur.Enabled
-		if raw.Blur.Radius > 0 {
-			cfg.Blur.Radius = raw.Blur.Radius
-		}
-		cfg.Corners.Enabled = raw.Corners.Enabled
-		if raw.Corners.Radius > 0 {
-			cfg.Corners.Radius = raw.Corners.Radius
-		}
-		cfg.Cursor = raw.Cursor
-		cfg.Focus = raw.Focus
-		cfg.Appearance = raw.Appearance
-		cfg.Keyboard = raw.Keyboard
-		for action, keys := range raw.Shortcuts {
-			cfg.Shortcuts[action] = keys
-		}
-		if raw.Outputs != nil {
-			cfg.Outputs = raw.Outputs
-		}
-		if raw.Workspaces.Mode != "" {
-			cfg.Workspaces = raw.Workspaces
-		}
-		return cfg, path
+// started right now (`ironlandctl show --json`: the first config file on
+// its search path, merged over the built-in defaults), plus a
+// human-readable description of where that came from - or a non-nil error
+// if `ironlandctl` itself couldn't be run at all (not installed, not on
+// PATH), which the caller should surface to the user since there's no
+// sensible settings to show otherwise.
+func loadConfig() (Config, string, error) {
+	cfg, err := ironlandctlShow()
+	if err != nil {
+		return defaultConfig(), "", err
 	}
-
-	return cfg, ""
+	loadedFrom, pathErr := ironlandctlActivePath()
+	if pathErr != nil || loadedFrom == "" {
+		return cfg, "", nil
+	}
+	return cfg, loadedFrom, nil
 }
 
-// saveConfig atomically writes cfg to the user's config file, creating its
-// parent directory if needed. Atomic replacement ensures the compositor's
-// live-reload watcher never observes a partially encoded TOML document.
+// saveConfig hands cfg to `ironlandctl apply`, which atomically writes it
+// to the user's config file (creating its parent directory if needed) and
+// reports the path it wrote to.
 func saveConfig(cfg Config) (string, error) {
-	path, err := userConfigPath()
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", err
-	}
-
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".config.toml.*")
-	if err != nil {
-		return "", err
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-
-	if err := temporary.Chmod(0o644); err != nil {
-		temporary.Close()
-		return "", err
-	}
-	if err := toml.NewEncoder(temporary).Encode(cfg); err != nil {
-		temporary.Close()
-		return "", err
-	}
-	if err := temporary.Sync(); err != nil {
-		temporary.Close()
-		return "", err
-	}
-	if err := temporary.Close(); err != nil {
-		return "", err
-	}
-	if err := os.Rename(temporaryPath, path); err != nil {
-		return "", err
-	}
-	return path, nil
+	return ironlandctlApply(cfg)
 }
