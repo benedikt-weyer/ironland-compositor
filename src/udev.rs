@@ -146,6 +146,20 @@ impl<'a> crate::rounded_corners::GlesCapable for UdevRenderer<'a> {
         )
     }
 
+    fn gles_texture(
+        gles_frame: &smithay::backend::renderer::gles::GlesFrame<'_, '_>,
+        texture: &smithay::backend::renderer::multigpu::MultiTexture,
+    ) -> Option<smithay::backend::renderer::gles::GlesTexture> {
+        use smithay::backend::renderer::Frame;
+        // `MultiTexture` caches one native texture per GPU node it has been
+        // imported for; this recovers the one for whichever node `gles_frame`
+        // belongs to (the node currently compositing this output). Absent
+        // when the surface's buffer hasn't been imported for that node -
+        // possible on hybrid graphics if a client's buffer still lives only
+        // on a different GPU than the one rendering the current output.
+        texture.get::<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>(&gles_frame.context_id())
+    }
+
     fn map_gles_error(err: smithay::backend::renderer::gles::GlesError) -> Self::Error {
         smithay::backend::renderer::multigpu::Error::Render(err)
     }

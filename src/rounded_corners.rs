@@ -7,15 +7,17 @@
 //! whatever was already drawn behind (another window, the wallpaper) show
 //! through - no offscreen pass or stencil trickery required.
 //!
-//! This only works where a real `GlesTexture` is reachable: the winit
-//! backend's `GlesRenderer` directly, and the udev backend's per-GPU
-//! `GlesRenderer` that the multi-GPU `MultiRenderer`/`MultiFrame` wrap
-//! internally (see [`GlesCapable`]/[`AsGlesFrame`]). When a texture can't be
-//! recovered this way (currently: never, for the two renderers this
-//! compositor uses, but the fallback exists for robustness) the surface is
-//! drawn unrounded rather than failing.
+//! This only works where a real `GlesTexture` is reachable for the surface
+//! being drawn (see [`GlesCapable::gles_texture`]): always for the winit
+//! backend's `GlesRenderer`, and for the udev backend's multi-GPU renderer
+//! whenever the surface's buffer has actually been imported for the GPU
+//! node currently rendering it (`MultiTexture::get` - true unless a client's
+//! buffer lives on a *different* GPU than the one compositing the current
+//! output, e.g. hybrid graphics with the window's buffer still resident on
+//! the other GPU). When no texture can be recovered this way, the surface
+//! is drawn unrounded rather than failing.
 
-use std::{any::Any, cell::Cell};
+use std::cell::Cell;
 
 use smithay::{
     backend::renderer::{
@@ -25,7 +27,8 @@ use smithay::{
             surface::{WaylandSurfaceRenderElement, WaylandSurfaceTexture},
         },
         gles::{
-            GlesError, GlesFrame, GlesRenderer, GlesTexProgram, Uniform, UniformName, UniformType,
+            GlesError, GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, Uniform, UniformName,
+            UniformType,
         },
         utils::{CommitCounter, DamageSet, OpaqueRegions},
     },
@@ -53,6 +56,14 @@ pub trait GlesCapable: Renderer {
         frame: &'a mut Self::Frame<'frame, 'buffer>,
     ) -> &'a mut GlesFrame<'frame, 'buffer>;
 
+    /// Recovers the real [`GlesTexture`] backing `texture`, if reachable
+    /// from `gles_frame` (a frame already known to belong to the GPU node
+    /// currently rendering, via [`gles_frame`](Self::gles_frame)).
+    fn gles_texture(
+        gles_frame: &GlesFrame<'_, '_>,
+        texture: &Self::TextureId,
+    ) -> Option<GlesTexture>;
+
     /// Lift a [`GlesError`] into this renderer's own error type.
     fn map_gles_error(err: GlesError) -> Self::Error;
 }
@@ -66,6 +77,10 @@ impl GlesCapable for GlesRenderer {
         frame: &'a mut <Self as smithay::backend::renderer::RendererSuper>::Frame<'frame, 'buffer>,
     ) -> &'a mut GlesFrame<'frame, 'buffer> {
         frame
+    }
+
+    fn gles_texture(_gles_frame: &GlesFrame<'_, '_>, texture: &GlesTexture) -> Option<GlesTexture> {
+        Some(texture.clone())
     }
 
     fn map_gles_error(err: GlesError) -> GlesError {
@@ -214,17 +229,17 @@ where
         opaque_regions: &[Rectangle<i32, Physical>],
         cache: Option<&UserDataMap>,
     ) -> Result<(), R::Error> {
+        let gles_frame = R::gles_frame(frame);
+
         let texture = match self.inner.texture() {
-            WaylandSurfaceTexture::Texture(texture) => {
-                (texture as &dyn Any)
-                    .downcast_ref::<smithay::backend::renderer::gles::GlesTexture>()
-            }
+            WaylandSurfaceTexture::Texture(texture) => R::gles_texture(gles_frame, texture),
             WaylandSurfaceTexture::SolidColor(_) => None,
         };
 
         let Some(texture) = texture else {
-            // No GLES texture to shade (a single-pixel-color buffer, or a
-            // renderer this shader can't reach into) - draw unrounded.
+            // No GLES texture to shade (a single-pixel-color buffer, or -
+            // udev only - a buffer not (yet) imported for the GPU node
+            // currently rendering it) - draw unrounded.
             return self
                 .inner
                 .draw(frame, src, dst, damage, opaque_regions, cache);
@@ -237,7 +252,7 @@ where
 
         R::gles_frame(frame)
             .render_texture_from_to(
-                texture,
+                &texture,
                 src,
                 dst,
                 damage,
