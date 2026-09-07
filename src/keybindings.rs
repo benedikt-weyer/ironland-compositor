@@ -96,12 +96,24 @@ pub fn parsed_keybindings(config: &Config) -> Vec<Keybinding> {
 
 /// The action bound to a bare Super key tap (pressed and released with no
 /// other key in between - see `input_handler`'s tap tracking), if any is
-/// configured. Only one action can meaningfully fire on a Super tap, so if
-/// more than one action lists a bare `"super"` spec, the first found (in
-/// arbitrary map order) wins and the rest are ignored with a warning.
+/// configured. Only one action can meaningfully fire on a Super tap.
+///
+/// `"shortcut:launcher"` is treated as the fallback here rather than an
+/// equal contender: it's `default_shortcuts`' own built-in "Super opens the
+/// launcher" binding, not something a user chose, so any *other* action a
+/// user has explicitly bound to a bare Super tap wins over it - otherwise a
+/// user binding a fresh action to plain `"super"` via settings would race
+/// this ever-present default and silently lose about half the time
+/// (`config.shortcuts` is a `HashMap`, so which of two bare-Super entries
+/// is "found first" isn't just unspecified, it's a *different* random
+/// answer on every config reload). Two or more non-default actions both
+/// claiming a bare Super tap is a genuine config conflict with no correct
+/// answer; that case is made at least deterministic (same outcome across
+/// reloads, not truly "correct") by picking the lexicographically-first
+/// action name, and the rest are ignored with a warning.
 pub fn super_tap_action(config: &Config) -> Option<&str> {
     let known = known_actions();
-    let mut found: Option<&str> = None;
+    let mut candidates: Vec<&str> = Vec::new();
 
     for (action, specs) in &config.shortcuts {
         if !specs.iter().any(|spec| is_bare_modifier_tap(spec)) {
@@ -111,17 +123,23 @@ pub fn super_tap_action(config: &Config) -> Option<&str> {
             warn!(action, "Unknown action bound to a bare Super tap, ignoring");
             continue;
         }
-        if let Some(existing) = found {
-            warn!(
-                action,
-                existing, "Multiple actions bound to a bare Super tap, ignoring this one"
-            );
-            continue;
-        }
-        found = Some(action.as_str());
+        candidates.push(action.as_str());
+    }
+    candidates.sort_unstable();
+
+    if candidates.len() > 1
+        && let Some(pos) = candidates.iter().position(|a| *a == "shortcut:launcher")
+    {
+        candidates.remove(pos);
     }
 
-    found
+    if let [chosen, ignored @ ..] = candidates.as_slice()
+        && !ignored.is_empty()
+    {
+        warn!(chosen, ?ignored, "Multiple actions bound to a bare Super tap, ignoring the rest");
+    }
+
+    candidates.into_iter().next()
 }
 
 /// Resolves where a newly-connecting output named `name`, with logical size
@@ -323,6 +341,31 @@ mod tests {
     #[test]
     fn default_shell_launcher_is_a_bare_super_tap() {
         assert_eq!(super_tap_action(&Config::default()), Some("shortcut:launcher"));
+    }
+
+    #[test]
+    fn a_user_bound_bare_super_action_wins_over_the_default_launcher_binding() {
+        let mut config = Config::default();
+        config
+            .shortcuts
+            .insert("toggle_floating".to_string(), vec!["super".to_string()]);
+        assert_eq!(super_tap_action(&config), Some("toggle_floating"));
+    }
+
+    #[test]
+    fn two_non_default_bare_super_actions_deterministically_pick_the_same_winner() {
+        let mut config = Config::default();
+        config
+            .shortcuts
+            .insert("toggle_floating".to_string(), vec!["super".to_string()]);
+        config
+            .shortcuts
+            .insert("kill_window".to_string(), vec!["super".to_string()]);
+        // Lexicographically first, and stable across repeated calls -
+        // the exact winner isn't the point, only that it doesn't change.
+        for _ in 0..5 {
+            assert_eq!(super_tap_action(&config), Some("kill_window"));
+        }
     }
 
     fn size(w: i32, h: i32) -> Size<i32, Logical> {
