@@ -9,7 +9,7 @@ use std::cell::{Ref, RefCell, RefMut};
 
 use smithay::{
     backend::input::InputTime,
-    desktop::{Space, layer_map_for_output},
+    desktop::{Space, layer_map_for_output, space::SpaceElement},
     input::pointer::MotionEvent,
     output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
@@ -417,14 +417,76 @@ pub(crate) fn current_focused_window<BackendData: Backend>(
 /// insert time: `apply_layout` already no-ops (no configure sent) once the
 /// window's pending size already matches its tile, so this is cheap once
 /// the window has caught up.
+///
+/// `xdg_toplevel`'s configure size is only ever advisory though - a client
+/// is free to commit something else, and one that has advertised its own
+/// `min_size` (via `set_min_size`, only known once it actually commits, so
+/// this can't be caught any earlier e.g. at `should_tile` time) will never
+/// honor a configure asking it to go smaller than that. Forcing such a
+/// window to stay in a tile it has declared it can't fit would just have it
+/// permanently overflow that tile's bounds, so it's untiled to float instead,
+/// the closest the compositor can get to "hard limit to the screen" without
+/// shrinking the window past a size it has said it cannot render at.
 pub(crate) fn resync_committed_window<BackendData: Backend>(state: &mut AnvilState<BackendData>, surface: &WlSurface) {
     let Some(window) = state.window_for_surface(surface) else {
         return;
     };
-    let Some((output, _idx)) = locate(state, &window) else {
+    let Some((output, idx)) = locate(state, &window) else {
         return;
     };
+
+    if let Some(assigned) = assigned_tile_rect(state, &window, &output, idx) {
+        let min = window_min_size(&window);
+        if (min.w > 0 && min.w > assigned.size.w) || (min.h > 0 && min.h > assigned.size.h) {
+            untile_window(state, &window);
+            center_on_output(state, &window, &output);
+            return;
+        }
+    }
+
     apply_layout(state, &output);
+}
+
+/// The rect `window`'s tiling tree currently assigns it, if it's tiled.
+fn assigned_tile_rect<BackendData: Backend>(
+    state: &AnvilState<BackendData>,
+    window: &WindowElement,
+    output: &Output,
+    idx: usize,
+) -> Option<Rectangle<i32, Logical>> {
+    let area = tiling_area(&state.space, output);
+    TilingState::tree(output, idx)
+        .layout(area)
+        .into_iter()
+        .find_map(|(w, rect)| (&w == window).then_some(rect))
+}
+
+fn window_min_size(window: &WindowElement) -> smithay::utils::Size<i32, Logical> {
+    #[allow(irrefutable_let_patterns)]
+    let Some(toplevel) = window.0.toplevel() else {
+        return (0, 0).into();
+    };
+    with_states(toplevel.wl_surface(), |states| {
+        states.cached_state.get::<SurfaceCachedState>().current().min_size
+    })
+}
+
+/// Centers `window` (assumed already mapped, e.g. just untiled) on `output`,
+/// clamped so it starts fully on-screen even when its own size is larger
+/// than the output - the compositor can reposition it, it just can't force
+/// it smaller than the minimum size the client itself has declared.
+fn center_on_output<BackendData: Backend>(
+    state: &mut AnvilState<BackendData>,
+    window: &WindowElement,
+    output: &Output,
+) {
+    let Some(output_geo) = state.space.output_geometry(output) else {
+        return;
+    };
+    let size = window.geometry().size;
+    let x = output_geo.loc.x + ((output_geo.size.w - size.w) / 2).max(0);
+    let y = output_geo.loc.y + ((output_geo.size.h - size.h) / 2).max(0);
+    state.space.map_element(window.clone(), (x, y), false);
 }
 
 pub(crate) fn raise_and_focus<BackendData: Backend>(state: &mut AnvilState<BackendData>, window: &WindowElement) {
