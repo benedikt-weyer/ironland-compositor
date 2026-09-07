@@ -20,7 +20,7 @@ use smithay::{
         },
     },
     output::Output,
-    utils::{Point, Rectangle, Scale, Size},
+    utils::{Logical, Point, Rectangle, Scale, Size},
     wayland::shell::wlr_layer::Layer as WlrLayer,
 };
 
@@ -34,7 +34,7 @@ use crate::{
 
 smithay::backend::renderer::element::render_elements! {
     pub CustomRenderElements<R> where
-        R: ImportAll + ImportMem;
+        R: ImportAll + ImportMem + GlesCapable;
     Pointer=PointerRenderElement<R>,
     Surface=WaylandSurfaceRenderElement<R>,
     // Shared by every compositor-drawn, software-rasterized screen overlay
@@ -42,6 +42,9 @@ smithay::backend::renderer::element::render_elements! {
     // `MemoryRenderBuffer` placed at some location, so one variant covers them.
     Overlay=MemoryRenderBufferRenderElement<R>,
     Blur=CropRenderElement<MemoryRenderBufferRenderElement<R>>,
+    // The focus-highlight border around the currently focused window (see
+    // `crate::border`).
+    Border=crate::border::BorderRenderElement,
     #[cfg(feature = "debug")]
     // Note: We would like to borrow this element instead, but that would introduce
     // a feature-dependent lifetime, which introduces a lot more feature bounds
@@ -57,6 +60,7 @@ impl<R: Renderer> std::fmt::Debug for CustomRenderElements<R> {
             Self::Surface(arg0) => f.debug_tuple("Surface").field(arg0).finish(),
             Self::Overlay(arg0) => f.debug_tuple("Overlay").field(arg0).finish(),
             Self::Blur(arg0) => f.debug_tuple("Blur").field(arg0).finish(),
+            Self::Border(_) => f.debug_tuple("Border").finish(),
             #[cfg(feature = "debug")]
             Self::Fps(arg0) => f.debug_tuple("Fps").field(arg0).finish(),
             Self::_GenericCatcher(arg0) => f.debug_tuple("_GenericCatcher").field(arg0).finish(),
@@ -159,6 +163,9 @@ pub fn output_elements<R>(
     blurred_background: Option<&MemoryRenderBuffer>,
     renderer: &mut R,
     show_window_preview: bool,
+    focused_window_rect: Option<Rectangle<i32, Logical>>,
+    border: &crate::config::BorderSettings,
+    corner_radius: f32,
 ) -> (
     Vec<OutputRenderElements<R, WindowRenderElement<R>>>,
     Color32F,
@@ -198,6 +205,16 @@ where
 
         let output_geometry = space.output_geometry(output).unwrap_or_default();
         let output_scale = output.current_scale().fractional_scale();
+
+        // The focus-highlight border, drawn in front of every window (list
+        // order is front-to-back, same as the pointer/preview elements
+        // already collected into `output_render_elements` above).
+        if let Some(mut window_rect) = focused_window_rect {
+            window_rect.loc -= output_geometry.loc;
+            if let Some(element) = crate::border::build(renderer, window_rect, border, corner_radius) {
+                output_render_elements.push(OutputRenderElements::from(CustomRenderElements::Border(element)));
+            }
+        }
 
         // Background/bottom layer-shell surfaces (e.g. a shell's own
         // wallpaper) are rendered separately below, *behind* the blur, so
@@ -303,6 +320,9 @@ pub fn render_output<'a, 'd, R>(
     damage_tracker: &'d mut OutputDamageTracker,
     age: usize,
     show_window_preview: bool,
+    focused_window_rect: Option<Rectangle<i32, Logical>>,
+    border: &crate::config::BorderSettings,
+    corner_radius: f32,
 ) -> Result<RenderOutputResult<'d>, OutputDamageTrackerError<R::Error>>
 where
     R: Renderer + ImportAll + ImportMem + GlesCapable,
@@ -316,6 +336,9 @@ where
         blurred_background,
         renderer,
         show_window_preview,
+        focused_window_rect,
+        border,
+        corner_radius,
     );
     damage_tracker.render_output(renderer, framebuffer, age, &elements, clear_color)
 }

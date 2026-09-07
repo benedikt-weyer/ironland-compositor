@@ -44,6 +44,22 @@ pub fn write(doc: &mut DocumentMut, full: &FullConfig) {
     corners["enabled"] = value(cfg.corners.enabled);
     corners["radius"] = value(i64::from(cfg.corners.radius));
 
+    let gaps = ensure_table(doc, "gaps");
+    gaps["inner"] = value(i64::from(cfg.gaps.inner));
+    gaps["outer"] = value(i64::from(cfg.gaps.outer));
+
+    let border = ensure_table(doc, "border");
+    border["enabled"] = value(cfg.border.enabled);
+    border["thickness"] = value(i64::from(cfg.border.thickness));
+    border["color"] = value(cfg.border.color.as_str());
+    match cfg.border.gradient_color.as_deref() {
+        Some(color) if !color.is_empty() => border["gradient_color"] = value(color),
+        _ => {
+            border.remove("gradient_color");
+        }
+    }
+    border["angle"] = value(f64::from(cfg.border.angle));
+
     let cursor = ensure_table(doc, "cursor");
     match cfg.cursor.theme.as_deref() {
         Some(theme) if !theme.is_empty() => cursor["theme"] = value(theme),

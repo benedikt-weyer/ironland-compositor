@@ -39,6 +39,20 @@ pub enum SettingKey {
     CornersEnabled,
     #[value(name = "corners.radius")]
     CornersRadius,
+    #[value(name = "gaps.inner")]
+    GapsInner,
+    #[value(name = "gaps.outer")]
+    GapsOuter,
+    #[value(name = "border.enabled")]
+    BorderEnabled,
+    #[value(name = "border.thickness")]
+    BorderThickness,
+    #[value(name = "border.color")]
+    BorderColor,
+    #[value(name = "border.gradient_color")]
+    BorderGradientColor,
+    #[value(name = "border.angle")]
+    BorderAngle,
     #[value(name = "cursor.theme")]
     CursorTheme,
     #[value(name = "cursor.size")]
@@ -79,6 +93,13 @@ impl SettingKey {
             BlurRadius,
             CornersEnabled,
             CornersRadius,
+            GapsInner,
+            GapsOuter,
+            BorderEnabled,
+            BorderThickness,
+            BorderColor,
+            BorderGradientColor,
+            BorderAngle,
             CursorTheme,
             CursorSize,
             FocusFollowsMouse,
@@ -108,6 +129,13 @@ impl SettingKey {
             BlurRadius => "blur.radius",
             CornersEnabled => "corners.enabled",
             CornersRadius => "corners.radius",
+            GapsInner => "gaps.inner",
+            GapsOuter => "gaps.outer",
+            BorderEnabled => "border.enabled",
+            BorderThickness => "border.thickness",
+            BorderColor => "border.color",
+            BorderGradientColor => "border.gradient_color",
+            BorderAngle => "border.angle",
             CursorTheme => "cursor.theme",
             CursorSize => "cursor.size",
             FocusFollowsMouse => "focus.follows_mouse",
@@ -142,6 +170,13 @@ pub fn get(full: &FullConfig, key: SettingKey) -> String {
         BlurRadius => cfg.blur.radius.to_string(),
         CornersEnabled => cfg.corners.enabled.to_string(),
         CornersRadius => cfg.corners.radius.to_string(),
+        GapsInner => cfg.gaps.inner.to_string(),
+        GapsOuter => cfg.gaps.outer.to_string(),
+        BorderEnabled => cfg.border.enabled.to_string(),
+        BorderThickness => cfg.border.thickness.to_string(),
+        BorderColor => cfg.border.color.clone(),
+        BorderGradientColor => cfg.border.gradient_color.clone().unwrap_or_default(),
+        BorderAngle => cfg.border.angle.to_string(),
         CursorTheme => cfg.cursor.theme.clone().unwrap_or_default(),
         CursorSize => cfg.cursor.size.map(|s| s.to_string()).unwrap_or_default(),
         FocusFollowsMouse => cfg.focus.follows_mouse.to_string(),
@@ -174,6 +209,16 @@ fn parse_u32(raw: &str) -> Result<u32> {
         .map_err(|_| anyhow::anyhow!("expected a non-negative number, got {raw:?}"))
 }
 
+/// Validates `raw` is `#rrggbb` or `#rrggbbaa`, returning it unchanged
+/// (lowercased) for storage.
+fn parse_hex_color(raw: &str) -> Result<String> {
+    let digits = raw
+        .strip_prefix('#')
+        .filter(|d| matches!(d.len(), 6 | 8) && d.chars().all(|c| c.is_ascii_hexdigit()))
+        .ok_or_else(|| anyhow::anyhow!("expected #rrggbb or #rrggbbaa, got {raw:?}"))?;
+    Ok(format!("#{}", digits.to_ascii_lowercase()))
+}
+
 /// A key's path into the TOML document, as `[table_path, leaf_key]`; the
 /// table path is created if it doesn't exist yet.
 fn table_and_leaf(key: SettingKey) -> (&'static [&'static str], &'static str) {
@@ -193,6 +238,13 @@ fn table_and_leaf(key: SettingKey) -> (&'static [&'static str], &'static str) {
         BlurRadius => (&["blur"], "radius"),
         CornersEnabled => (&["corners"], "enabled"),
         CornersRadius => (&["corners"], "radius"),
+        GapsInner => (&["gaps"], "inner"),
+        GapsOuter => (&["gaps"], "outer"),
+        BorderEnabled => (&["border"], "enabled"),
+        BorderThickness => (&["border"], "thickness"),
+        BorderColor => (&["border"], "color"),
+        BorderGradientColor => (&["border"], "gradient_color"),
+        BorderAngle => (&["border"], "angle"),
         CursorTheme => (&["cursor"], "theme"),
         CursorSize => (&["cursor"], "size"),
         FocusFollowsMouse => (&["focus"], "follows_mouse"),
@@ -229,8 +281,18 @@ pub fn set(doc: &mut DocumentMut, key: SettingKey, raw: &str) -> Result<()> {
         | KeyboardLayout | KeyboardVariant | KeyboardOptions | CursorTheme => {
             table[leaf] = value(raw);
         }
-        TopBar | BlurEnabled | CornersEnabled | FocusFollowsMouse | FocusMouseFollowsFocus
-        | WorkspacesDynamic | WorkspacesOverlay | AppearanceDarkMode => {
+        BorderColor | BorderGradientColor => {
+            table[leaf] = value(parse_hex_color(raw)?);
+        }
+        TopBar
+        | BlurEnabled
+        | CornersEnabled
+        | BorderEnabled
+        | FocusFollowsMouse
+        | FocusMouseFollowsFocus
+        | WorkspacesDynamic
+        | WorkspacesOverlay
+        | AppearanceDarkMode => {
             table[leaf] = value(parse_bool(raw)?);
         }
         BlurRadius | CornersRadius => {
@@ -239,6 +301,22 @@ pub fn set(doc: &mut DocumentMut, key: SettingKey, raw: &str) -> Result<()> {
                 bail!("radius must be between 1 and 50, got {radius}");
             }
             table[leaf] = value(i64::from(radius));
+        }
+        GapsInner | GapsOuter => {
+            table[leaf] = value(i64::from(parse_u32(raw)?));
+        }
+        BorderThickness => {
+            let thickness = parse_u32(raw)?;
+            if thickness > 32 {
+                bail!("thickness must be between 0 and 32, got {thickness}");
+            }
+            table[leaf] = value(i64::from(thickness));
+        }
+        BorderAngle => {
+            let angle = raw
+                .parse::<f32>()
+                .map_err(|_| anyhow::anyhow!("expected a number of degrees, got {raw:?}"))?;
+            table[leaf] = value(f64::from(angle.rem_euclid(360.0)));
         }
         CursorSize => {
             table[leaf] = value(i64::from(parse_u32(raw)?));

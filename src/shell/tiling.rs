@@ -13,7 +13,7 @@ use smithay::{
     input::pointer::MotionEvent,
     output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::{IsAlive, Logical, Point, Rectangle, SERIAL_COUNTER},
+    utils::{IsAlive, Logical, Point, Rectangle, SERIAL_COUNTER, Size},
     wayland::{compositor::with_states, shell::xdg::SurfaceCachedState},
 };
 
@@ -25,8 +25,6 @@ use crate::{
 
 use super::WindowElement;
 
-/// Gap between tiled windows, and between tiled windows and the output edges.
-const GAP: i32 = 8;
 /// How much a keyboard-driven resize changes a split's ratio per key press.
 const RESIZE_STEP: f32 = 0.05;
 
@@ -106,7 +104,9 @@ impl TilingLayout {
             .or_else(|| self.last.clone())
             .unwrap_or_else(|| Self::first_leaf(&root).clone());
 
-        let target_rect = Self::layout_rec_rect(&root, area, &target).unwrap_or(area);
+        // Gap doesn't matter for this orientation heuristic (only which
+        // dimension is larger), so 0 avoids threading config through insert().
+        let target_rect = Self::layout_rec_rect(&root, area, 0, &target).unwrap_or(area);
         let vertical = target_rect.size.w >= target_rect.size.h;
 
         let new_root = Self::replace_leaf(
@@ -276,20 +276,26 @@ impl TilingLayout {
         changed
     }
 
-    /// Compute the on-screen rectangle for every tiled window within `area`.
-    pub fn layout(&self, area: Rectangle<i32, Logical>) -> Vec<(WindowElement, Rectangle<i32, Logical>)> {
+    /// Compute the on-screen rectangle for every tiled window within `area`,
+    /// separated by `gap` logical pixels.
+    pub fn layout(&self, area: Rectangle<i32, Logical>, gap: i32) -> Vec<(WindowElement, Rectangle<i32, Logical>)> {
         let mut out = Vec::new();
         if let Some(root) = &self.root {
-            Self::layout_rec(root, area, &mut out);
+            Self::layout_rec(root, area, gap, &mut out);
         }
         out
     }
 
-    fn layout_rec(node: &Node, area: Rectangle<i32, Logical>, out: &mut Vec<(WindowElement, Rectangle<i32, Logical>)>) {
+    fn layout_rec(
+        node: &Node,
+        area: Rectangle<i32, Logical>,
+        gap: i32,
+        out: &mut Vec<(WindowElement, Rectangle<i32, Logical>)>,
+    ) {
         match node {
             Node::Leaf(w) => out.push((w.clone(), area)),
             Node::Split { vertical, ratio, a, b } => {
-                let half_gap = GAP / 2;
+                let half_gap = gap / 2;
                 if *vertical {
                     let wa = ((area.size.w as f32) * ratio) as i32;
                     let area_a =
@@ -298,8 +304,8 @@ impl TilingLayout {
                         Point::from((area.loc.x + wa + half_gap, area.loc.y)),
                         (area.size.w - wa - half_gap, area.size.h).into(),
                     );
-                    Self::layout_rec(a, area_a, out);
-                    Self::layout_rec(b, area_b, out);
+                    Self::layout_rec(a, area_a, gap, out);
+                    Self::layout_rec(b, area_b, gap, out);
                 } else {
                     let ha = ((area.size.h as f32) * ratio) as i32;
                     let area_a =
@@ -308,8 +314,8 @@ impl TilingLayout {
                         Point::from((area.loc.x, area.loc.y + ha + half_gap)),
                         (area.size.w, area.size.h - ha - half_gap).into(),
                     );
-                    Self::layout_rec(a, area_a, out);
-                    Self::layout_rec(b, area_b, out);
+                    Self::layout_rec(a, area_a, gap, out);
+                    Self::layout_rec(b, area_b, gap, out);
                 }
             }
         }
@@ -318,10 +324,11 @@ impl TilingLayout {
     fn layout_rec_rect(
         node: &Node,
         area: Rectangle<i32, Logical>,
+        gap: i32,
         target: &WindowElement,
     ) -> Option<Rectangle<i32, Logical>> {
         let mut rects = Vec::new();
-        Self::layout_rec(node, area, &mut rects);
+        Self::layout_rec(node, area, gap, &mut rects);
         rects.into_iter().find(|(w, _)| w == target).map(|(_, r)| r)
     }
 }
@@ -371,11 +378,17 @@ impl TilingState {
     }
 }
 
-pub(crate) fn tiling_area(space: &Space<WindowElement>, output: &Output) -> Rectangle<i32, Logical> {
+pub(crate) fn tiling_area(space: &Space<WindowElement>, output: &Output, outer_gap: i32) -> Rectangle<i32, Logical> {
     let geo = space.output_geometry(output).unwrap_or_default();
     let map = layer_map_for_output(output);
     let zone = map.non_exclusive_zone();
-    Rectangle::new(geo.loc + zone.loc, zone.size)
+    let outer_gap = outer_gap.max(0);
+    let loc = geo.loc + zone.loc + Point::from((outer_gap, outer_gap));
+    let size = Size::from((
+        (zone.size.w - 2 * outer_gap).max(0),
+        (zone.size.h - 2 * outer_gap).max(0),
+    ));
+    Rectangle::new(loc, size)
 }
 
 /// Finds which output's tiling tree (and at which workspace index) contains
@@ -454,9 +467,9 @@ fn assigned_tile_rect<BackendData: Backend>(
     output: &Output,
     idx: usize,
 ) -> Option<Rectangle<i32, Logical>> {
-    let area = tiling_area(&state.space, output);
+    let area = tiling_area(&state.space, output, state.config.gaps.outer as i32);
     TilingState::tree(output, idx)
-        .layout(area)
+        .layout(area, state.config.gaps.inner as i32)
         .into_iter()
         .find_map(|(w, rect)| (&w == window).then_some(rect))
 }
@@ -535,8 +548,8 @@ fn warp_pointer_to<BackendData: Backend>(state: &mut AnvilState<BackendData>, wi
 /// whenever they're next shown by [`crate::shell::workspace`]).
 pub fn apply_layout<BackendData: Backend>(state: &mut AnvilState<BackendData>, output: &Output) {
     let idx = WorkspaceState::get(output).active();
-    let area = tiling_area(&state.space, output);
-    let rects = TilingState::tree(output, idx).layout(area);
+    let area = tiling_area(&state.space, output, state.config.gaps.outer as i32);
+    let rects = TilingState::tree(output, idx).layout(area, state.config.gaps.inner as i32);
     for (window, rect) in rects {
         #[allow(irrefutable_let_patterns)]
         if let Some(toplevel) = window.0.toplevel() {
@@ -596,7 +609,7 @@ pub fn tile_new_window<BackendData: Backend>(
 
     crate::shell::workspace::assign_new_window(window, &output, false);
 
-    let area = tiling_area(&state.space, &output);
+    let area = tiling_area(&state.space, &output, state.config.gaps.outer as i32);
     TilingState::tree_mut(&output, idx).insert(window.clone(), area, target.as_ref());
 
     apply_layout(state, &output);
@@ -652,8 +665,8 @@ pub fn cleanup_dead<BackendData: Backend>(state: &mut AnvilState<BackendData>) -
     let dead_focus = current_focused_window(state).filter(|w| !w.alive());
     let fallback = dead_focus.as_ref().and_then(|focused| {
         let (output, idx) = locate(state, focused)?;
-        let area = tiling_area(&state.space, &output);
-        let rects = TilingState::tree(&output, idx).layout(area);
+        let area = tiling_area(&state.space, &output, state.config.gaps.outer as i32);
+        let rects = TilingState::tree(&output, idx).layout(area, state.config.gaps.inner as i32);
         let replacement = nearest_neighbor(&rects, focused);
         Some((output, idx, replacement))
     });
@@ -701,8 +714,8 @@ pub fn focus_direction<BackendData: Backend>(state: &mut AnvilState<BackendData>
     let Some((output, idx)) = locate(state, &focused) else {
         return;
     };
-    let area = tiling_area(&state.space, &output);
-    let rects = TilingState::tree(&output, idx).layout(area);
+    let area = tiling_area(&state.space, &output, state.config.gaps.outer as i32);
+    let rects = TilingState::tree(&output, idx).layout(area, state.config.gaps.inner as i32);
     if let Some(target) = neighbor(&rects, &focused, dir) {
         raise_and_focus(state, &target);
         return;
@@ -721,8 +734,8 @@ pub fn swap_direction<BackendData: Backend>(state: &mut AnvilState<BackendData>,
     let Some((output, idx)) = locate(state, &focused) else {
         return;
     };
-    let area = tiling_area(&state.space, &output);
-    let rects = TilingState::tree(&output, idx).layout(area);
+    let area = tiling_area(&state.space, &output, state.config.gaps.outer as i32);
+    let rects = TilingState::tree(&output, idx).layout(area, state.config.gaps.inner as i32);
     let Some(target) = neighbor(&rects, &focused, dir) else {
         return;
     };

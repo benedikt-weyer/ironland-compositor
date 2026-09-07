@@ -149,7 +149,7 @@ pub fn apply_config<B: Backend>(state: &mut AnvilState<B>) {
             .count()
             .max(tiling::TilingState::len(output));
         let destination = count - 1;
-        let area = tiling::tiling_area(&state.space, output);
+        let area = tiling::tiling_area(&state.space, output, state.config.gaps.outer as i32);
 
         for idx in count..old_count {
             let tiled = tiling::TilingState::tree(output, idx).windows();
@@ -445,7 +445,7 @@ pub fn move_focused_window<B: Backend>(state: &mut AnvilState<B>, delta: i32) {
     }
 
     if was_tiled {
-        let area = tiling::tiling_area(&state.space, &output);
+        let area = tiling::tiling_area(&state.space, &output, state.config.gaps.outer as i32);
         tiling::TilingState::tree_mut(&output, target_idx).insert(window.clone(), area, None);
         // Reflows the source workspace (still active) to close the gap the
         // window left; the destination tree is applied whenever it's shown.

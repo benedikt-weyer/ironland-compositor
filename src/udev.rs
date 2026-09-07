@@ -1717,6 +1717,9 @@ impl AnvilState<UdevData> {
 
         self.pre_repaint(&output, frame_target);
 
+        let focused_window_rect = crate::shell::tiling::current_focused_window(self)
+            .and_then(|w| self.space.element_bbox(&w));
+
         let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
             device
         } else {
@@ -1795,6 +1798,8 @@ impl AnvilState<UdevData> {
             &mut self.wallpaper,
             &self.config.blur,
             &self.config.corners,
+            focused_window_rect,
+            &self.config.border,
         );
         let reschedule = match result {
             Ok((has_rendered, states)) => {
@@ -1883,6 +1888,8 @@ fn render_surface<'a>(
     wallpaper: &mut crate::wallpaper::Wallpaper,
     blur: &crate::config::BlurSettings,
     corners: &crate::config::CornersSettings,
+    focused_window_rect: Option<Rectangle<i32, Logical>>,
+    border: &crate::config::BorderSettings,
 ) -> Result<(bool, RenderElementStates), SwapBuffersError> {
     let output_geometry = space.output_geometry(output).unwrap();
     let scale = Scale::from(output.current_scale().fractional_scale());
@@ -2026,6 +2033,7 @@ fn render_surface<'a>(
     .ok()
     .map(CustomRenderElements::Overlay);
 
+    let corner_radius = if corners.enabled { corners.radius as f32 } else { 0.0 };
     let (elements, clear_color) = output_elements(
         output,
         space,
@@ -2034,6 +2042,9 @@ fn render_surface<'a>(
         blurred_wallpaper_buffer.as_ref(),
         renderer,
         show_window_preview,
+        focused_window_rect,
+        border,
+        corner_radius,
     );
 
     let frame_mode = if surface.disable_direct_scanout {

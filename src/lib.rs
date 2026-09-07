@@ -14,6 +14,7 @@
 // working unchanged.
 pub use ironland_config as config;
 pub mod keybindings;
+pub mod border;
 #[cfg(any(feature = "udev", feature = "xwayland"))]
 pub mod cursor;
 pub mod drawing;

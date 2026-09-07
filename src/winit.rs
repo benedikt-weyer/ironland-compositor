@@ -266,6 +266,15 @@ pub fn run_winit() {
                     .unwrap_or_default();
             state.pre_repaint(&output, frame_target);
 
+            let focused_window_rect = crate::shell::tiling::current_focused_window(&state)
+                .and_then(|w| state.space.element_bbox(&w));
+            let border = state.config.border.clone();
+            let corner_radius = if state.config.corners.enabled {
+                state.config.corners.radius as f32
+            } else {
+                0.0
+            };
+
             let backend = &mut state.backend_data.backend;
 
             // draw the cursor as relevant
@@ -471,6 +480,9 @@ pub fn run_winit() {
                     damage_tracker,
                     age,
                     show_window_preview,
+                    focused_window_rect,
+                    &border,
+                    corner_radius,
                 )
                 .map_err(|err| match err {
                     OutputDamageTrackerError::Rendering(err) => err.into(),

@@ -164,6 +164,54 @@ impl Default for CornersSettings {
     }
 }
 
+/// Space between tiled windows, and between tiled windows and the output
+/// edges. Both default to reproducing this compositor's hardcoded behavior
+/// before either was configurable: an 8px gap between windows, and no gap
+/// at the screen edge.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct GapsSettings {
+    pub inner: u32,
+    pub outer: u32,
+}
+
+impl Default for GapsSettings {
+    fn default() -> Self {
+        Self { inner: 8, outer: 0 }
+    }
+}
+
+/// A highlight border drawn around the currently focused window only (not
+/// every tiled window). Off by default. `gradient_color` unset draws a
+/// solid `color` border; set, it draws a two-stop linear gradient from
+/// `color` to `gradient_color` along `angle` degrees, similar to
+/// Hyprland's `col.active_border`.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct BorderSettings {
+    pub enabled: bool,
+    /// Border thickness in logical pixels.
+    pub thickness: u32,
+    /// `#rrggbb` or `#rrggbbaa`.
+    pub color: String,
+    /// `#rrggbb` or `#rrggbbaa`; unset means a solid `color` border.
+    pub gradient_color: Option<String>,
+    /// Gradient direction in degrees. Ignored when `gradient_color` is unset.
+    pub angle: f32,
+}
+
+impl Default for BorderSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            thickness: 2,
+            color: "#89b4fa".to_string(),
+            gradient_color: None,
+            angle: 45.0,
+        }
+    }
+}
+
 /// Pointer/keyboard-focus interaction. Both default off, matching the
 /// click-to-focus behavior this compositor had before either existed.
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
@@ -203,6 +251,8 @@ struct RawConfig {
     wallpaper: Option<String>,
     blur: BlurSettings,
     corners: CornersSettings,
+    gaps: GapsSettings,
+    border: BorderSettings,
     cursor: CursorSettings,
     focus: FocusSettings,
     shortcuts: HashMap<String, Vec<String>>,
@@ -232,6 +282,11 @@ pub struct Config {
     pub blur: BlurSettings,
     /// Rounded corner settings for window content (see [`CornersSettings`]).
     pub corners: CornersSettings,
+    /// Gap between tiled windows and between them and the output edges (see
+    /// [`GapsSettings`]).
+    pub gaps: GapsSettings,
+    /// Highlight border around the focused window (see [`BorderSettings`]).
+    pub border: BorderSettings,
     /// Mouse cursor theme/size (see [`CursorSettings`]).
     pub cursor: CursorSettings,
     /// Pointer/keyboard-focus interaction (see [`FocusSettings`]).
@@ -259,6 +314,8 @@ impl Default for Config {
             wallpaper: None,
             blur: BlurSettings::default(),
             corners: CornersSettings::default(),
+            gaps: GapsSettings::default(),
+            border: BorderSettings::default(),
             cursor: CursorSettings::default(),
             focus: FocusSettings::default(),
             shortcuts: default_shortcuts(),
@@ -486,6 +543,8 @@ impl Config {
                     wallpaper: raw.wallpaper,
                     blur: raw.blur,
                     corners: raw.corners,
+                    gaps: raw.gaps,
+                    border: raw.border,
                     cursor: raw.cursor,
                     focus: raw.focus,
                     shortcuts,
@@ -565,6 +624,8 @@ mod tests {
             wallpaper: None,
             blur: BlurSettings::default(),
             corners: CornersSettings::default(),
+            gaps: GapsSettings::default(),
+            border: BorderSettings::default(),
             cursor: CursorSettings::default(),
             focus: FocusSettings::default(),
             shortcuts,
