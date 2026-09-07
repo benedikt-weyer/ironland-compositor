@@ -187,6 +187,39 @@ var actionLabels = map[string]string{
 	"toggle_decorations":   "Toggle window decorations",
 }
 
+// advertisedEvent describes one named shortcut a client can register via
+// `ironland-shortcuts-v1`'s `get_shortcut` request (the `shortcut:<name>`
+// action escape hatch - see `config::is_shortcut_action` in src/config.rs).
+// This list is curated from caelestia-shell's `modules/Shortcuts.qml`
+// (the only client this GUI ships alongside), so it can drift if that
+// file's `CustomShortcut { name: ... }` entries change; a name that isn't
+// listed here can still be bound by typing it into "Add a custom event"
+// below, it just won't show up as a suggestion.
+type advertisedEvent struct {
+	Name  string
+	Label string
+}
+
+var advertisedEvents = []advertisedEvent{
+	{"launcher", "Shell: toggle launcher"},
+	{"showall", "Shell: toggle launcher/dashboard/OSD"},
+	{"dashboard", "Shell: toggle dashboard"},
+	{"session", "Shell: toggle session menu"},
+	{"sidebar", "Shell: toggle sidebar"},
+	{"utilities", "Shell: toggle utilities"},
+	{"nexus", "Shell: open nexus"},
+	{"launcherInterrupt", "Shell: interrupt launcher keybind"},
+}
+
+func advertisedEventLabel(name string) string {
+	for _, e := range advertisedEvents {
+		if e.Name == name {
+			return e.Label
+		}
+	}
+	return "Shell: " + name
+}
+
 // defaultShortcuts is the baseline the compositor falls back to for any
 // action not overridden in the config file. Mirrors
 // `config::default_shortcuts` in src/config.rs.
@@ -194,7 +227,8 @@ func defaultShortcuts() map[string][]string {
 	return map[string][]string{
 		"quit":                 {"super+alt+backspace", "super+q"},
 		"run_terminal":         {"super+c"},
-		"toggle_launcher":      {"super"},
+		"toggle_launcher":      {"ctrl+space"},
+		"shortcut:launcher":    {"super"},
 		"open_browser":         {"super+b"},
 		"open_file_manager":    {"super+f"},
 		"toggle_floating":      {"super+shift+space"},

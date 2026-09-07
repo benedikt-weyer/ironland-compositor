@@ -32,9 +32,17 @@
     shared by every client (there is no per-client id/app_id pairing) -
     this is intended for a single trusted shell process, not arbitrary
     third-party clients.
+
+    Version 2 adds `bind`, which registers a shortcut against a raw
+    modifiers+keysym trigger supplied by the client at request time instead
+    of a compositor-configured name - meant for a single other trusted
+    process, the `org.freedesktop.impl.portal.GlobalShortcuts` backend (see
+    `ironland-portal-global-shortcuts`), which negotiates triggers with
+    arbitrary applications itself and only needs the compositor to grab the
+    resulting key combination.
   </description>
 
-  <interface name="ironland_shortcuts_manager_v1" version="1">
+  <interface name="ironland_shortcuts_manager_v1" version="2">
     <description summary="manager for named shortcut objects">
       This interface allows a client to obtain shortcut objects by name.
     </description>
@@ -51,6 +59,24 @@
       </description>
       <arg name="id" type="new_id" interface="ironland_shortcut_v1"/>
       <arg name="name" type="string" summary="the shortcut name to listen for"/>
+    </request>
+
+    <request name="bind" since="2">
+      <description summary="obtain a shortcut object bound to a raw trigger">
+        Create an object that reports presses/releases of the given
+        modifiers+keysym combination, regardless of any `[shortcuts]`
+        config. `modifiers` is a bitmask: 1=ctrl, 2=alt, 4=shift, 8=logo
+        (super); `keysym` is an xkbcommon keysym value.
+
+        A trigger already claimed by a `[shortcuts]` config entry or a
+        `get_shortcut` name keeps firing only that one - this request never
+        overrides those. Binding the same trigger more than once (from this
+        client or another) is allowed - every resulting object receives the
+        events independently.
+      </description>
+      <arg name="id" type="new_id" interface="ironland_shortcut_v1"/>
+      <arg name="modifiers" type="uint" summary="modifier bitmask: 1=ctrl 2=alt 4=shift 8=logo"/>
+      <arg name="keysym" type="uint" summary="xkbcommon keysym"/>
     </request>
 
     <request name="destroy" type="destructor">

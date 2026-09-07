@@ -17,7 +17,18 @@ path = "src/main.rs"
 name = "ironland-workspaces"
 path = "src/bin/ironland_workspaces.rs"
 
+# A small standalone Wayland client + D-Bus service: the
+# `org.freedesktop.impl.portal.GlobalShortcuts` backend for
+# xdg-desktop-portal, bridging it to `ironland-shortcuts-v1`'s `bind`
+# request (protocol version 2+; see `src/shortcuts.rs`). See its own module
+# doc for scope/limitations.
+[[bin]]
+name = "ironland-portal-global-shortcuts"
+path = "src/bin/ironland_portal_global_shortcuts.rs"
+
 [dependencies]
+zbus = "4"
+async-io = "2"
 bitflags = "2.2.1"
 rand = "0.8"
 tracing = { version = "0.1.37", features = ["max_level_trace", "release_max_level_debug"] }

@@ -8,6 +8,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -15,6 +16,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/storage"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -137,7 +139,10 @@ func buildKeyboardTab(cfg *Config) fyne.CanvasObject {
 
 // buildShortcutsTab lays out one editable row per known action, each
 // holding its bound key combos as a comma-separated list (e.g.
-// "super+left, super+kp_left").
+// "super+left, super+kp_left"), followed by a second section for binding
+// keys to named events a client advertises via `ironland-shortcuts-v1`
+// (the `shortcut:<name>` action - see `advertisedEvents`), which can be
+// added and removed freely since there's no fixed list of them.
 func buildShortcutsTab(cfg *Config) fyne.CanvasObject {
 	defaults := defaultShortcuts()
 	resets := newResetGroup()
@@ -166,7 +171,134 @@ func buildShortcutsTab(cfg *Config) fyne.CanvasObject {
 	hint := widget.NewLabel("Separate multiple key combos for the same action with commas. A combo is modifiers and a key joined with '+', e.g. \"super+alt+left\".")
 	hint.Wrapping = fyne.TextWrapWord
 
-	return resets.page(container.NewVBox(form, hint))
+	eventsSection := buildShellEventsSection(cfg, resets)
+
+	return resets.page(container.NewVBox(form, hint, widget.NewSeparator(), eventsSection))
+}
+
+// buildShellEventsSection is the "Shell events" part of the Shortcuts tab:
+// one removable row per `shortcut:<name>` entry already in cfg.Shortcuts
+// (pre-populated from the loaded config file, so a hand-edited entry stays
+// visible), plus controls to add another - either picked from
+// advertisedEvents or typed freely, for an event a future shell version
+// advertises that isn't in that curated list yet.
+func buildShellEventsSection(cfg *Config, resets *resetGroup) fyne.CanvasObject {
+	eventsForm := widget.NewForm()
+	var eventNames []string
+
+	for action := range cfg.Shortcuts {
+		if name, ok := strings.CutPrefix(action, "shortcut:"); ok {
+			eventNames = append(eventNames, name)
+		}
+	}
+	sort.Strings(eventNames)
+
+	var rebuild func()
+	addEventRow := func(name string) {
+		for _, existing := range eventNames {
+			if existing == name {
+				return
+			}
+		}
+		eventNames = append(eventNames, name)
+		sort.Strings(eventNames)
+		rebuild()
+	}
+	removeEventRow := func(name string) {
+		// Set to an explicit empty list rather than deleting the map key:
+		// deleting would just let the compositor's own built-in default
+		// (see `defaultShortcuts`) show back through on next load, for any
+		// event name - "launcher" today - that has one.
+		cfg.Shortcuts["shortcut:"+name] = []string{}
+		filtered := eventNames[:0]
+		for _, existing := range eventNames {
+			if existing != name {
+				filtered = append(filtered, existing)
+			}
+		}
+		eventNames = filtered
+		resets.refresh()
+		rebuild()
+	}
+
+	rebuild = func() {
+		eventsForm.Items = nil
+		for _, name := range eventNames {
+			name := name // capture for the closures below
+			action := "shortcut:" + name
+
+			entry := widget.NewEntry()
+			entry.SetText(strings.Join(cfg.Shortcuts[action], ", "))
+			entry.SetPlaceHolder("e.g. super+g")
+			entry.OnChanged = func(s string) {
+				cfg.Shortcuts[action] = splitKeyCombos(s)
+				resets.refresh()
+			}
+
+			remove := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() { removeEventRow(name) })
+			row := container.NewBorder(nil, nil, nil, remove, entry)
+
+			eventsForm.Append(advertisedEventLabel(name), row)
+		}
+		eventsForm.Refresh()
+	}
+	rebuild()
+
+	suggestionNames := func() []string {
+		var names []string
+		for _, e := range advertisedEvents {
+			found := false
+			for _, existing := range eventNames {
+				if existing == e.Name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				names = append(names, e.Name)
+			}
+		}
+		return names
+	}
+
+	suggestions := widget.NewSelect(suggestionNames(), nil)
+	suggestions.PlaceHolder = "Pick an advertised event…"
+	addSuggested := widget.NewButton("Add", func() {
+		if suggestions.Selected == "" {
+			return
+		}
+		addEventRow(suggestions.Selected)
+		suggestions.SetOptions(suggestionNames())
+		suggestions.ClearSelected()
+	})
+
+	custom := widget.NewEntry()
+	custom.SetPlaceHolder("Custom event name (e.g. one a third-party client advertises)")
+	addCustom := widget.NewButton("Add", func() {
+		name := strings.TrimSpace(custom.Text)
+		if name == "" {
+			return
+		}
+		addEventRow(name)
+		suggestions.SetOptions(suggestionNames())
+		custom.SetText("")
+	})
+
+	hint := widget.NewLabel(
+		"Binds a key to a named shortcut a client requests over ironland-shortcuts-v1 (get_shortcut)" +
+			" rather than one of the compositor's own actions above - caelestia-shell registers the" +
+			" ones suggested here (see its modules/Shortcuts.qml). A name with no client currently" +
+			" listening for it simply never fires.",
+	)
+	hint.Wrapping = fyne.TextWrapWord
+
+	return container.NewVBox(
+		widget.NewLabelWithStyle("Shell events", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		hint,
+		eventsForm,
+		container.NewBorder(nil, nil, nil, addSuggested, suggestions),
+		container.NewBorder(nil, nil, nil, addCustom, custom),
+	)
 }
 
 // buildAppearanceTab holds the dark/light mode toggle. Unlike the other

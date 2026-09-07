@@ -1,6 +1,9 @@
 use std::{convert::TryInto, process::Command, sync::atomic::Ordering};
 
-use crate::{AnvilState, focus::PointerFocusTarget, shell::FullscreenSurface};
+use crate::{
+    AnvilState, focus::PointerFocusTarget, shell::FullscreenSurface,
+    shortcuts::ShortcutsHandler,
+};
 
 #[cfg(feature = "udev")]
 use crate::udev::UdevData;
@@ -372,8 +375,14 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     // should be forwarded to the client or not.
                     if let KeyState::Pressed = state {
                         if !inhibited {
-                            let action =
-                                process_keyboard_shortcut(&data.keybindings, *modifiers, keysym);
+                            let bound_shortcuts =
+                                data.shortcuts_state().dynamic_bindings().to_vec();
+                            let action = process_keyboard_shortcut(
+                                &data.keybindings,
+                                &bound_shortcuts,
+                                *modifiers,
+                                keysym,
+                            );
 
                             if let Some(KeyAction::Shortcut(name)) = &action {
                                 held_shortcut_keys.insert(keysym, name.clone());
@@ -1903,15 +1912,29 @@ fn process_dynamic_shortcut(modifiers: ModifiersState, keysym: Keysym) -> Option
 
 fn process_keyboard_shortcut(
     keybindings: &[(crate::config::KeyModifiers, Keysym, KeyAction)],
+    bound_shortcuts: &[(crate::config::KeyModifiers, Keysym, String)],
     modifiers: ModifiersState,
     keysym: Keysym,
 ) -> Option<KeyAction> {
-    process_dynamic_shortcut(modifiers, keysym).or_else(|| {
-        keybindings
-            .iter()
-            .find(|(binding_mods, binding_sym, _)| {
-                *binding_sym == keysym && binding_mods.matches(&modifiers)
-            })
-            .map(|(_, _, action)| action.clone())
-    })
+    process_dynamic_shortcut(modifiers, keysym)
+        .or_else(|| {
+            keybindings
+                .iter()
+                .find(|(binding_mods, binding_sym, _)| {
+                    *binding_sym == keysym && binding_mods.matches(&modifiers)
+                })
+                .map(|(_, _, action)| action.clone())
+        })
+        .or_else(|| {
+            // Triggers registered dynamically through `ironland-shortcuts-v1`'s
+            // `bind` request (see `crate::shortcuts::ShortcutsManagerState::
+            // dynamic_bindings`) - checked last so a `[shortcuts]` config
+            // entry or `get_shortcut` name for the same combo always wins.
+            bound_shortcuts
+                .iter()
+                .find(|(binding_mods, binding_sym, _)| {
+                    *binding_sym == keysym && binding_mods.matches(&modifiers)
+                })
+                .map(|(_, _, name)| KeyAction::Shortcut(name.clone()))
+        })
 }

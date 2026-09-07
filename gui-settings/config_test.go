@@ -71,8 +71,11 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 		t.Fatalf("loadConfig outputs[DP-1].refreshRate = %d", loaded.Outputs["DP-1"].RefreshRate)
 	}
 	// An action untouched by the override should keep its built-in default.
-	if !reflect.DeepEqual(loaded.Shortcuts["toggle_launcher"], []string{"super"}) {
+	if !reflect.DeepEqual(loaded.Shortcuts["toggle_launcher"], []string{"ctrl+space"}) {
 		t.Fatalf("loadConfig shortcuts[toggle_launcher] = %v", loaded.Shortcuts["toggle_launcher"])
+	}
+	if !reflect.DeepEqual(loaded.Shortcuts["shortcut:launcher"], []string{"super"}) {
+		t.Fatalf("loadConfig shortcuts[shortcut:launcher] = %v", loaded.Shortcuts["shortcut:launcher"])
 	}
 }
 

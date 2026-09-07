@@ -84,8 +84,25 @@
           # bare name (`Command::new("Xwayland")`, resolved via `PATH`) -
           # there's no Cargo-level way to point it at a store path, so the
           # binary itself needs Xwayland on its PATH instead.
+          #
+          # Also installs the `org.freedesktop.impl.portal.GlobalShortcuts`
+          # backend's D-Bus activation + xdg-desktop-portal registration
+          # files (see `src/bin/ironland_portal_global_shortcuts.rs`).
+          # `resources/ironland.portal` has no store paths in it so it's
+          # installed as-is; the `.service` file's `Exec=` needs this
+          # derivation's own `$out`, so it's generated here instead of
+          # checked in statically.
           postFixup = ''
             wrapProgram $out/bin/ironland-copositor --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xwayland ]}
+
+            install -Dm444 resources/ironland.portal \
+              $out/share/xdg-desktop-portal/portals/ironland.portal
+            install -Dm444 /dev/stdin \
+              $out/share/dbus-1/services/org.freedesktop.impl.portal.desktop.ironland.service <<EOF
+            [D-BUS Service]
+            Name=org.freedesktop.impl.portal.desktop.ironland
+            Exec=$out/bin/ironland-portal-global-shortcuts
+            EOF
           '';
         });
 

@@ -367,7 +367,12 @@ fn default_shortcuts() -> HashMap<String, Vec<String>> {
     [
         ("quit", vec!["super+alt+backspace", "super+q"]),
         ("run_terminal", vec!["super+c"]),
-        ("toggle_launcher", vec!["super"]),
+        ("toggle_launcher", vec!["ctrl+space"]),
+        // Fires the shell's own "launcher" shortcut (see caelestia-shell's
+        // `modules/Shortcuts.qml`) via the `ironland-shortcuts-v1`
+        // `shortcut:<name>` escape hatch - not the compositor's built-in
+        // launcher above.
+        ("shortcut:launcher", vec!["super"]),
         ("open_browser", vec!["super+b"]),
         ("open_file_manager", vec!["super+f"]),
         ("toggle_floating", vec!["super+shift+space"]),
@@ -640,7 +645,7 @@ fn is_bare_modifier_tap(spec: &str) -> bool {
 /// Parses a binding spec like `"ctrl+shift+left"` into its modifiers and
 /// keysym. The last `+`-separated token is the key; everything before it is
 /// a modifier name (`ctrl`/`control`, `alt`, `shift`, `super`/`logo`/`meta`).
-fn parse_binding(spec: &str) -> Option<(KeyModifiers, Keysym)> {
+pub fn parse_binding(spec: &str) -> Option<(KeyModifiers, Keysym)> {
     let parts: Vec<&str> = spec
         .split('+')
         .map(str::trim)
@@ -752,10 +757,10 @@ mod tests {
     }
 
     #[test]
-    fn default_toggle_launcher_is_a_bare_super_tap() {
+    fn default_shell_launcher_is_a_bare_super_tap() {
         assert_eq!(
             Config::default().super_tap_action(),
-            Some("toggle_launcher")
+            Some("shortcut:launcher")
         );
     }
 
@@ -782,7 +787,7 @@ mod tests {
         merged.extend(raw.shortcuts);
 
         assert_eq!(merged["quit"], vec!["ctrl+alt+q"]);
-        assert_eq!(merged["toggle_launcher"], vec!["super"]);
+        assert_eq!(merged["toggle_launcher"], vec!["ctrl+space"]);
     }
 
     fn size(w: i32, h: i32) -> Size<i32, Logical> {
