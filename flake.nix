@@ -96,6 +96,11 @@
           # checked in statically.
           postFixup = ''
             wrapProgram $out/bin/ironland-compositor --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xwayland ]}
+            # `ironlandctl outputs detect` shells out to `wayland-info` by
+            # bare name to enumerate connected monitors, so it needs
+            # wayland-utils on its PATH the same way ironland-compositor
+            # itself needs Xwayland above.
+            wrapProgram $out/bin/ironlandctl --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.wayland-utils ]}
 
             install -Dm444 resources/ironland.portal \
               $out/share/xdg-desktop-portal/portals/ironland.portal
