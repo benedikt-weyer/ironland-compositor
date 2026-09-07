@@ -4,4 +4,3 @@ nixos.qcow2
 result
 result-*
 *.log
-gui-settings
