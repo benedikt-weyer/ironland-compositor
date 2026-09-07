@@ -12,11 +12,13 @@ use smithay::{
             },
         },
     },
-    desktop::space::{
-        ConstrainBehavior, ConstrainReference, Space, SpaceRenderElements, constrain_space_element,
+    desktop::{
+        LayerSurface, layer_map_for_output,
+        space::{ConstrainBehavior, ConstrainReference, Space, SpaceRenderElements, constrain_space_element},
     },
     output::Output,
-    utils::{Point, Rectangle, Size},
+    utils::{Point, Rectangle, Scale, Size},
+    wayland::shell::wlr_layer::Layer as WlrLayer,
 };
 
 #[cfg(feature = "debug")]
@@ -186,22 +188,50 @@ where
             output_render_elements.extend(space_preview_elements(renderer, space, output));
         }
 
-        let space_elements = smithay::desktop::space::space_render_elements::<_, WindowElement, _>(
-            renderer,
-            [space],
-            output,
-            1.0,
-        )
-        .expect("output without mode?");
-        output_render_elements.extend(space_elements.into_iter().map(OutputRenderElements::Space));
+        let output_geometry = space.output_geometry(output).unwrap_or_default();
+        let output_scale = output.current_scale().fractional_scale();
+
+        // Background/bottom layer-shell surfaces (e.g. a shell's own
+        // wallpaper) are rendered separately below, *behind* the blur, so
+        // that an opaque client-drawn background can't hide it. Top/overlay
+        // layers (bars, popups) still render above every window.
+        let layer_map = layer_map_for_output(output);
+        let (lower_layers, upper_layers): (Vec<&LayerSurface>, Vec<&LayerSurface>) = layer_map
+            .layers()
+            .rev()
+            .partition(|surface| matches!(surface.layer(), WlrLayer::Background | WlrLayer::Bottom));
+
+        let render_layers = |layers: &[&LayerSurface], renderer: &mut R| {
+            layers
+                .iter()
+                .filter_map(|surface| layer_map.layer_geometry(surface).map(|geo| (geo.loc, *surface)))
+                .flat_map(|(loc, surface)| {
+                    AsRenderElements::<R>::render_elements::<WaylandSurfaceRenderElement<R>>(
+                        surface,
+                        renderer,
+                        loc.to_physical_precise_round(output_scale),
+                        Scale::from(output_scale),
+                        1.0,
+                    )
+                })
+                .map(|element| OutputRenderElements::from(CustomRenderElements::Surface(element)))
+                .collect::<Vec<_>>()
+        };
+
+        output_render_elements.extend(render_layers(&upper_layers, renderer));
+
+        output_render_elements.extend(
+            space
+                .render_elements_for_region(renderer, &output_geometry, output_scale, 1.0)
+                .into_iter()
+                .map(|element| OutputRenderElements::Window(Wrap::from(element))),
+        );
 
         // Place a cropped blurred wallpaper immediately behind each window.
         // Opaque application pixels cover it completely; alpha-bearing pixels
         // naturally composite over it and produce the backdrop-blur effect.
         if let Some(blurred_background) = blurred_background {
-            let output_geometry = space.output_geometry(output).unwrap_or_default();
             let output_bounds = Rectangle::from_size(output_geometry.size);
-            let output_scale = output.current_scale().fractional_scale();
             for window in space.elements_for_output(output) {
                 let Some(mut window_rect) = space.element_bbox(window) else {
                     continue;
@@ -236,6 +266,9 @@ where
                 }
             }
         }
+
+        output_render_elements.extend(render_layers(&lower_layers, renderer));
+        drop(layer_map);
 
         // The wallpaper sits behind every window, so it's appended last:
         // damage-tracked render elements are painted front-to-back, in list
