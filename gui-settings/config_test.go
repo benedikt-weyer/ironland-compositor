@@ -42,6 +42,9 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 	cfg.Appearance.DarkMode = true
 	cfg.Blur = BlurSettings{Enabled: true, Radius: 20}
 	cfg.Corners = CornersSettings{Enabled: true, Radius: 8}
+	cfg.Gaps = GapsSettings{Inner: 12, Outer: 4}
+	gradient := "#5555ff"
+	cfg.Border = BorderSettings{Enabled: true, Thickness: 6, Color: "#ff5555", GradientColor: &gradient, Angle: 90}
 	cfg.Shortcuts["quit"] = []string{"ctrl+alt+q"}
 	cfg.Outputs["DP-1"] = OutputSettings{RefreshRate: 144_000}
 
@@ -83,6 +86,13 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 	}
 	if !loaded.Corners.Enabled || loaded.Corners.Radius != 8 {
 		t.Fatalf("loadConfig corners = %+v, want enabled radius 8", loaded.Corners)
+	}
+	if loaded.Gaps.Inner != 12 || loaded.Gaps.Outer != 4 {
+		t.Fatalf("loadConfig gaps = %+v, want inner 12 outer 4", loaded.Gaps)
+	}
+	if !loaded.Border.Enabled || loaded.Border.Thickness != 6 || loaded.Border.Color != "#ff5555" ||
+		loaded.Border.GradientColor == nil || *loaded.Border.GradientColor != "#5555ff" || loaded.Border.Angle != 90 {
+		t.Fatalf("loadConfig border = %+v, want enabled thickness 6 color #ff5555 gradient #5555ff angle 90", loaded.Border)
 	}
 	if !reflect.DeepEqual(loaded.Shortcuts["quit"], []string{"ctrl+alt+q"}) {
 		t.Fatalf("loadConfig shortcuts[quit] = %v", loaded.Shortcuts["quit"])

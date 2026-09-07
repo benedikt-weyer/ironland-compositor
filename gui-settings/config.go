@@ -42,6 +42,25 @@ type CornersSettings struct {
 	Radius  int  `json:"radius"`
 }
 
+// GapsSettings mirrors `ironland_config::GapsSettings`: space between tiled
+// windows, and between tiled windows and the output edges.
+type GapsSettings struct {
+	Inner int `json:"inner"`
+	Outer int `json:"outer"`
+}
+
+// BorderSettings mirrors `ironland_config::BorderSettings`: a highlight
+// border drawn around the currently focused window only. GradientColor
+// empty means a solid Color border; set, it's a two-stop gradient from
+// Color to GradientColor along Angle degrees.
+type BorderSettings struct {
+	Enabled       bool    `json:"enabled"`
+	Thickness     int     `json:"thickness"`
+	Color         string  `json:"color"`
+	GradientColor *string `json:"gradient_color"`
+	Angle         float64 `json:"angle"`
+}
+
 // CursorSettings mirrors `ironland_config::CursorSettings`: an empty Theme,
 // or a Size of 0, means "fall back to the XCURSOR_THEME/XCURSOR_SIZE
 // environment variables, or the compositor's own built-in default if those
@@ -96,6 +115,8 @@ type Config struct {
 	Wallpaper  string                    `json:"wallpaper"`
 	Blur       BlurSettings              `json:"blur"`
 	Corners    CornersSettings           `json:"corners"`
+	Gaps       GapsSettings              `json:"gaps"`
+	Border     BorderSettings            `json:"border"`
 	Cursor     CursorSettings            `json:"cursor"`
 	Focus      FocusSettings             `json:"focus"`
 	Appearance AppearanceSettings        `json:"appearance"`

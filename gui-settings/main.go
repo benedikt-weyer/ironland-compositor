@@ -415,6 +415,109 @@ func buildAppearanceTab(cfg *Config, w fyne.Window) fyne.CanvasObject {
 	cornersHint := widget.NewLabel("Rounds the corners of window content in logical pixels, drawn on the GPU. Changes apply when saved.")
 	cornersHint.Wrapping = fyne.TextWrapWord
 
+	gapsInner := widget.NewEntry()
+	gapsInner.SetText(fmt.Sprintf("%d", cfg.Gaps.Inner))
+	gapsInner.OnChanged = func(value string) {
+		var gap int
+		if _, err := fmt.Sscanf(value, "%d", &gap); err == nil && gap >= 0 {
+			cfg.Gaps.Inner = gap
+		}
+		resets.refresh()
+	}
+	gapsOuter := widget.NewEntry()
+	gapsOuter.SetText(fmt.Sprintf("%d", cfg.Gaps.Outer))
+	gapsOuter.OnChanged = func(value string) {
+		var gap int
+		if _, err := fmt.Sscanf(value, "%d", &gap); err == nil && gap >= 0 {
+			cfg.Gaps.Outer = gap
+		}
+		resets.refresh()
+	}
+	gapsForm := widget.NewForm(
+		widget.NewFormItem("Gap between windows", resets.item(gapsInner,
+			func() bool { return cfg.Gaps.Inner != defaults.Gaps.Inner },
+			func() { gapsInner.SetText(fmt.Sprintf("%d", defaults.Gaps.Inner)) },
+		)),
+		widget.NewFormItem("Gap to screen edge", resets.item(gapsOuter,
+			func() bool { return cfg.Gaps.Outer != defaults.Gaps.Outer },
+			func() { gapsOuter.SetText(fmt.Sprintf("%d", defaults.Gaps.Outer)) },
+		)),
+	)
+	gapsHint := widget.NewLabel("Space, in logical pixels, between tiled windows and between them and the output edges. Changes apply when saved.")
+	gapsHint.Wrapping = fyne.TextWrapWord
+
+	borderEnabled := widget.NewCheck("Highlight the focused window", nil)
+	borderEnabled.SetChecked(cfg.Border.Enabled)
+	borderEnabled.OnChanged = func(checked bool) {
+		cfg.Border.Enabled = checked
+		resets.refresh()
+	}
+	borderThickness := widget.NewEntry()
+	borderThickness.SetText(fmt.Sprintf("%d", cfg.Border.Thickness))
+	borderThickness.SetPlaceHolder("0–32")
+	borderThickness.OnChanged = func(value string) {
+		var thickness int
+		if _, err := fmt.Sscanf(value, "%d", &thickness); err == nil && thickness >= 0 && thickness <= 32 {
+			cfg.Border.Thickness = thickness
+		}
+		resets.refresh()
+	}
+	borderColor := widget.NewEntry()
+	borderColor.SetText(cfg.Border.Color)
+	borderColor.SetPlaceHolder("#rrggbb or #rrggbbaa")
+	borderColor.OnChanged = func(value string) { cfg.Border.Color = value; resets.refresh() }
+	borderGradientColor := widget.NewEntry()
+	borderGradientColor.SetText(formatOptionalColor(cfg.Border.GradientColor))
+	borderGradientColor.SetPlaceHolder("empty = solid colour")
+	borderGradientColor.OnChanged = func(value string) {
+		if value == "" {
+			cfg.Border.GradientColor = nil
+		} else {
+			v := value
+			cfg.Border.GradientColor = &v
+		}
+		resets.refresh()
+	}
+	borderAngle := widget.NewEntry()
+	borderAngle.SetText(fmt.Sprintf("%g", cfg.Border.Angle))
+	borderAngle.OnChanged = func(value string) {
+		var angle float64
+		if _, err := fmt.Sscanf(value, "%g", &angle); err == nil && angle >= 0 && angle < 360 {
+			cfg.Border.Angle = angle
+		}
+		resets.refresh()
+	}
+	borderForm := widget.NewForm(
+		widget.NewFormItem("Enable focus border", resets.item(borderEnabled,
+			func() bool { return cfg.Border.Enabled != defaults.Border.Enabled },
+			func() { borderEnabled.SetChecked(defaults.Border.Enabled) },
+		)),
+		widget.NewFormItem("Border thickness", resets.item(borderThickness,
+			func() bool { return cfg.Border.Thickness != defaults.Border.Thickness },
+			func() { borderThickness.SetText(fmt.Sprintf("%d", defaults.Border.Thickness)) },
+		)),
+		widget.NewFormItem("Colour", resets.item(borderColor,
+			func() bool { return cfg.Border.Color != defaults.Border.Color },
+			func() { borderColor.SetText(defaults.Border.Color) },
+		)),
+		widget.NewFormItem("Gradient colour", resets.item(borderGradientColor,
+			func() bool {
+				return formatOptionalColor(cfg.Border.GradientColor) != formatOptionalColor(defaults.Border.GradientColor)
+			},
+			func() { borderGradientColor.SetText(formatOptionalColor(defaults.Border.GradientColor)) },
+		)),
+		widget.NewFormItem("Gradient angle", resets.item(borderAngle,
+			func() bool { return cfg.Border.Angle != defaults.Border.Angle },
+			func() { borderAngle.SetText(fmt.Sprintf("%g", defaults.Border.Angle)) },
+		)),
+	)
+	borderHint := widget.NewLabel(
+		"Draws a highlight border around whichever window currently has keyboard focus. Leave \"Gradient" +
+			" colour\" empty for a solid border, or set it for a two-colour gradient along \"Gradient angle\"" +
+			" degrees. Changes apply when saved.",
+	)
+	borderHint.Wrapping = fyne.TextWrapWord
+
 	cursorTheme := widget.NewEntry()
 	cursorTheme.SetText(cfg.Cursor.Theme)
 	cursorTheme.SetPlaceHolder("e.g. Adwaita, Bibata-Modern-Classic (empty = system default)")
@@ -468,6 +571,8 @@ func buildAppearanceTab(cfg *Config, w fyne.Window) fyne.CanvasObject {
 		widget.NewSeparator(), wallpaperForm, wallpaperHint,
 		widget.NewSeparator(), blurForm, blurHint,
 		widget.NewSeparator(), cornersForm, cornersHint,
+		widget.NewSeparator(), gapsForm, gapsHint,
+		widget.NewSeparator(), borderForm, borderHint,
 		widget.NewSeparator(), cursorForm, cursorHint,
 	))
 }
@@ -578,6 +683,15 @@ func buildFocusTab(cfg *Config) fyne.CanvasObject {
 	hint.Wrapping = fyne.TextWrapWord
 
 	return resets.page(container.NewVBox(form, hint))
+}
+
+// formatOptionalColor renders a BorderSettings.GradientColor for display:
+// nil (solid-colour border) shows as an empty field rather than "<nil>".
+func formatOptionalColor(color *string) string {
+	if color == nil {
+		return ""
+	}
+	return *color
 }
 
 // formatCursorSize renders a CursorSettings.Size for display: 0 means
