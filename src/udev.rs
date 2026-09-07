@@ -127,6 +127,30 @@ type UdevRenderer<'a> = MultiRenderer<
     GbmGlesBackend<GlesRenderer, DrmDeviceFd>,
 >;
 
+/// Lets [`crate::rounded_corners`] reach into the udev backend's per-GPU
+/// `GlesRenderer`/`GlesFrame` that `MultiRenderer`/`MultiFrame` wrap, using
+/// the `AsMut` impls smithay's multi-GPU renderer already provides for
+/// exactly this pair of backend types (both render and target node use the
+/// same `GbmGlesBackend<GlesRenderer, _>` here, so there's only one GLES
+/// renderer/frame to recover).
+impl<'a> crate::rounded_corners::GlesCapable for UdevRenderer<'a> {
+    fn gles_renderer(&mut self) -> &mut GlesRenderer {
+        std::convert::AsMut::<GlesRenderer>::as_mut(self)
+    }
+
+    fn gles_frame<'b, 'frame, 'buffer>(
+        frame: &'b mut <Self as smithay::backend::renderer::RendererSuper>::Frame<'frame, 'buffer>,
+    ) -> &'b mut smithay::backend::renderer::gles::GlesFrame<'frame, 'buffer> {
+        std::convert::AsMut::<smithay::backend::renderer::gles::GlesFrame<'frame, 'buffer>>::as_mut(
+            frame,
+        )
+    }
+
+    fn map_gles_error(err: smithay::backend::renderer::gles::GlesError) -> Self::Error {
+        smithay::backend::renderer::multigpu::Error::Render(err)
+    }
+}
+
 #[derive(Debug, PartialEq)]
 struct UdevOutputId {
     device_id: DrmNode,
@@ -1756,6 +1780,7 @@ impl AnvilState<UdevData> {
             workspace_overlay_shown.is_some(),
             &mut self.wallpaper,
             &self.config.blur,
+            &self.config.corners,
         );
         let reschedule = match result {
             Ok((has_rendered, states)) => {
@@ -1843,9 +1868,15 @@ fn render_surface<'a>(
     show_workspace_overlay: bool,
     wallpaper: &mut crate::wallpaper::Wallpaper,
     blur: &crate::config::BlurSettings,
+    corners: &crate::config::CornersSettings,
 ) -> Result<(bool, RenderElementStates), SwapBuffersError> {
     let output_geometry = space.output_geometry(output).unwrap();
     let scale = Scale::from(output.current_scale().fractional_scale());
+
+    crate::rounded_corners::set_current(crate::rounded_corners::CornersConfig {
+        enabled: corners.enabled,
+        radius: corners.radius as f32,
+    });
 
     let mut custom_elements: Vec<CustomRenderElements<_>> = Vec::new();
 

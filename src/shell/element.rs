@@ -6,19 +6,22 @@ use smithay::{
         renderer::{
             ImportAll, ImportMem, Renderer, Texture,
             element::{
-                AsRenderElements, solid::SolidColorRenderElement, surface::WaylandSurfaceRenderElement,
+                AsRenderElements, Element, Id, solid::SolidColorRenderElement,
+                surface::WaylandSurfaceRenderElement,
             },
         },
     },
     desktop::{
-        Window, WindowSurface, WindowSurfaceType, space::SpaceElement, utils::OutputPresentationFeedback,
+        Window, WindowSurface, WindowSurfaceType, space::SpaceElement,
+        utils::OutputPresentationFeedback,
     },
     input::{
         Seat,
         pointer::{
-            AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
-            GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent,
-            GestureSwipeUpdateEvent, MotionEvent, PointerTarget, RelativeMotionEvent,
+            AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent,
+            GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent,
+            GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, MotionEvent,
+            PointerTarget, RelativeMotionEvent,
         },
         tablet::tool::TabletToolTarget,
         touch::{FrameMarker, TouchTarget},
@@ -30,11 +33,18 @@ use smithay::{
     },
     render_elements,
     utils::{IsAlive, Logical, Physical, Point, Rectangle, Scale, Serial, user_data::UserDataMap},
-    wayland::{compositor::SurfaceData as WlSurfaceData, dmabuf::DmabufFeedback, seat::WaylandFocus},
+    wayland::{
+        compositor::SurfaceData as WlSurfaceData, dmabuf::DmabufFeedback, seat::WaylandFocus,
+    },
 };
 
 use super::ssd::HEADER_BAR_HEIGHT;
-use crate::{AnvilState, focus::PointerFocusTarget, state::Backend};
+use crate::{
+    AnvilState,
+    focus::PointerFocusTarget,
+    rounded_corners::{self, GlesCapable, RoundedWindowRenderElement},
+    state::Backend,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WindowElement(pub Window);
@@ -55,7 +65,9 @@ impl WindowElement {
             Point::default()
         };
 
-        let surface_under = self.0.surface_under(location - offset.to_f64(), window_type);
+        let surface_under = self
+            .0
+            .surface_under(location - offset.to_f64(), window_type);
         let (under, loc) = match self.0.underlying_surface() {
             WindowSurface::Wayland(_) => {
                 surface_under.map(|(surface, loc)| (PointerFocusTarget::WlSurface(surface), loc))
@@ -85,7 +97,8 @@ impl WindowElement {
         T: Into<Duration>,
         F: FnMut(&WlSurface, &WlSurfaceData) -> Option<Output> + Copy,
     {
-        self.0.send_frame(output, time, throttle, primary_scan_out_output)
+        self.0
+            .send_frame(output, time, throttle, primary_scan_out_output)
     }
 
     pub fn send_dmabuf_feedback<'a, P, F>(
@@ -292,7 +305,9 @@ impl<BackendData: Backend> TouchTarget<AnvilState<BackendData>> for SSD {
         let mut state = self.0.decoration_state();
         if state.is_ssd {
             state.header_bar.pointer_enter(event.location);
-            state.header_bar.touch_down(seat, data, &self.0, event.serial);
+            state
+                .header_bar
+                .touch_down(seat, data, &self.0, event.serial);
         }
     }
 
@@ -395,7 +410,9 @@ impl<BackendData: Backend> TabletToolTarget<AnvilState<BackendData>> for SSD {
     ) {
         let mut state = self.0.decoration_state();
         if state.is_ssd {
-            state.header_bar.touch_down(seat, data, &self.0, event.serial);
+            state
+                .header_bar
+                .touch_down(seat, data, &self.0, event.serial);
         }
     }
 
@@ -503,9 +520,10 @@ impl SpaceElement for WindowElement {
 }
 
 render_elements!(
-    pub WindowRenderElement<R> where R: ImportAll + ImportMem;
+    pub WindowRenderElement<R> where R: ImportAll + ImportMem + GlesCapable;
     Window=WaylandSurfaceRenderElement<R>,
     Decoration=SolidColorRenderElement,
+    Rounded=RoundedWindowRenderElement<R>,
 );
 
 impl<R: Renderer> std::fmt::Debug for WindowRenderElement<R> {
@@ -513,6 +531,7 @@ impl<R: Renderer> std::fmt::Debug for WindowRenderElement<R> {
         match self {
             Self::Window(arg0) => f.debug_tuple("Window").field(arg0).finish(),
             Self::Decoration(arg0) => f.debug_tuple("Decoration").field(arg0).finish(),
+            Self::Rounded(_) => f.debug_tuple("Rounded").finish(),
             Self::_GenericCatcher(arg0) => f.debug_tuple("_GenericCatcher").field(arg0).finish(),
         }
     }
@@ -520,7 +539,7 @@ impl<R: Renderer> std::fmt::Debug for WindowRenderElement<R> {
 
 impl<R> AsRenderElements<R> for WindowElement
 where
-    R: Renderer + ImportAll + ImportMem,
+    R: Renderer + ImportAll + ImportMem + GlesCapable,
     R::TextureId: Clone + Texture + 'static,
 {
     type RenderElement = WindowRenderElement<R>;
@@ -550,15 +569,61 @@ where
 
             location.y += (scale.y * HEADER_BAR_HEIGHT as f64) as i32;
 
-            let window_elements =
-                AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
-            vec.extend(window_elements);
+            vec.extend(self.render_surface_elements(renderer, location, scale, alpha));
             vec.into_iter().map(C::from).collect()
         } else {
-            AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha)
+            self.render_surface_elements(renderer, location, scale, alpha)
                 .into_iter()
                 .map(C::from)
                 .collect()
         }
+    }
+}
+
+impl WindowElement {
+    /// Renders this window's own surface tree (root toplevel surface, its
+    /// subsurfaces, and any popups) - everything `AsRenderElements`
+    /// produces except the SSD header bar, which the caller adds
+    /// separately. The root toplevel surface's element is wrapped for
+    /// corner rounding when enabled (see [`rounded_corners`]); every other
+    /// surface (subsurfaces, popups) renders unrounded, matching how real
+    /// desktops only round the base window shape.
+    fn render_surface_elements<R>(
+        &self,
+        renderer: &mut R,
+        location: Point<i32, Physical>,
+        scale: Scale<f64>,
+        alpha: f32,
+    ) -> Vec<WindowRenderElement<R>>
+    where
+        R: Renderer + ImportAll + ImportMem + GlesCapable,
+        R::TextureId: Clone + Texture + 'static,
+    {
+        let elements: Vec<WaylandSurfaceRenderElement<R>> =
+            AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha);
+
+        let corners = rounded_corners::current();
+        let root_id = (corners.enabled && corners.radius > 0.0)
+            .then(|| self.wl_surface())
+            .flatten()
+            .map(|surface| Id::from_wayland_resource(&*surface));
+        let program = root_id
+            .is_some()
+            .then(|| rounded_corners::corners_program(renderer.gles_renderer()).ok())
+            .flatten();
+
+        elements
+            .into_iter()
+            .map(|element| match (&root_id, &program) {
+                (Some(root_id), Some(program)) if element.id() == root_id => {
+                    WindowRenderElement::Rounded(RoundedWindowRenderElement::new(
+                        element,
+                        program.clone(),
+                        corners.radius,
+                    ))
+                }
+                _ => WindowRenderElement::Window(element),
+            })
+            .collect()
     }
 }

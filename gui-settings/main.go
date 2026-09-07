@@ -383,6 +383,35 @@ func buildAppearanceTab(cfg *Config, w fyne.Window) fyne.CanvasObject {
 	blurHint := widget.NewLabel("Gaussian blur is visible through transparent and translucent parts of application windows. Higher radii are smoother but require more work when the wallpaper changes or an output is resized. Changes apply when saved.")
 	blurHint.Wrapping = fyne.TextWrapWord
 
+	cornersEnabled := widget.NewCheck("Round window corners", nil)
+	cornersEnabled.SetChecked(cfg.Corners.Enabled)
+	cornersEnabled.OnChanged = func(checked bool) {
+		cfg.Corners.Enabled = checked
+		resets.refresh()
+	}
+	cornersRadius := widget.NewEntry()
+	cornersRadius.SetText(fmt.Sprintf("%d", cfg.Corners.Radius))
+	cornersRadius.SetPlaceHolder("1–50")
+	cornersRadius.OnChanged = func(value string) {
+		var radius int
+		if _, err := fmt.Sscanf(value, "%d", &radius); err == nil && radius >= 1 && radius <= 50 {
+			cfg.Corners.Radius = radius
+		}
+		resets.refresh()
+	}
+	cornersForm := widget.NewForm(
+		widget.NewFormItem("Enable rounded corners", resets.item(cornersEnabled,
+			func() bool { return cfg.Corners.Enabled != defaults.Corners.Enabled },
+			func() { cornersEnabled.SetChecked(defaults.Corners.Enabled) },
+		)),
+		widget.NewFormItem("Corner radius", resets.item(cornersRadius,
+			func() bool { return cfg.Corners.Radius != defaults.Corners.Radius },
+			func() { cornersRadius.SetText(fmt.Sprintf("%d", defaults.Corners.Radius)) },
+		)),
+	)
+	cornersHint := widget.NewLabel("Rounds the corners of window content in logical pixels, drawn on the GPU. Changes apply when saved.")
+	cornersHint.Wrapping = fyne.TextWrapWord
+
 	cursorTheme := widget.NewEntry()
 	cursorTheme.SetText(cfg.Cursor.Theme)
 	cursorTheme.SetPlaceHolder("e.g. Adwaita, Bibata-Modern-Classic (empty = system default)")
@@ -435,6 +464,7 @@ func buildAppearanceTab(cfg *Config, w fyne.Window) fyne.CanvasObject {
 		darkModeRow, colorHint,
 		widget.NewSeparator(), wallpaperForm, wallpaperHint,
 		widget.NewSeparator(), blurForm, blurHint,
+		widget.NewSeparator(), cornersForm, cornersHint,
 		widget.NewSeparator(), cursorForm, cursorHint,
 	))
 }

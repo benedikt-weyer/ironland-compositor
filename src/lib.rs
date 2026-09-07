@@ -21,6 +21,7 @@ pub mod launcher;
 #[cfg(feature = "libei")]
 pub mod libei;
 pub mod render;
+pub mod rounded_corners;
 #[cfg(feature = "udev")]
 pub mod session;
 pub mod shell;

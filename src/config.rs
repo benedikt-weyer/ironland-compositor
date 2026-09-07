@@ -237,6 +237,26 @@ impl Default for BlurSettings {
     }
 }
 
+/// Rounded corners on window content, drawn via a GLES shader (see
+/// `rounded_corners`). Off by default, matching the sharp-cornered windows
+/// this compositor had before the feature existed.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct CornersSettings {
+    pub enabled: bool,
+    /// Corner radius in logical pixels.
+    pub radius: u32,
+}
+
+impl Default for CornersSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            radius: 12,
+        }
+    }
+}
+
 /// Pointer/keyboard-focus interaction. Both default off, matching the
 /// click-to-focus behavior this compositor had before either existed.
 #[derive(Debug, Clone, Deserialize, Default, PartialEq)]
@@ -285,6 +305,7 @@ struct RawConfig {
     top_bar: bool,
     wallpaper: Option<String>,
     blur: BlurSettings,
+    corners: CornersSettings,
     cursor: CursorSettings,
     focus: FocusSettings,
     shortcuts: HashMap<String, Vec<String>>,
@@ -313,6 +334,8 @@ pub struct Config {
     pub wallpaper: Option<String>,
     /// Gaussian backdrop blur settings for translucent application windows.
     pub blur: BlurSettings,
+    /// Rounded corner settings for window content (see [`CornersSettings`]).
+    pub corners: CornersSettings,
     /// Mouse cursor theme/size (see [`CursorSettings`]).
     pub cursor: CursorSettings,
     /// Pointer/keyboard-focus interaction (see [`FocusSettings`]).
@@ -339,6 +362,7 @@ impl Default for Config {
             top_bar: false,
             wallpaper: None,
             blur: BlurSettings::default(),
+            corners: CornersSettings::default(),
             cursor: CursorSettings::default(),
             focus: FocusSettings::default(),
             shortcuts: default_shortcuts(),
@@ -537,6 +561,7 @@ impl Config {
                     top_bar: raw.top_bar,
                     wallpaper: raw.wallpaper,
                     blur: raw.blur,
+                    corners: raw.corners,
                     cursor: raw.cursor,
                     focus: raw.focus,
                     shortcuts,
@@ -776,6 +801,7 @@ mod tests {
             top_bar: false,
             wallpaper: None,
             blur: BlurSettings::default(),
+            corners: CornersSettings::default(),
             cursor: CursorSettings::default(),
             focus: FocusSettings::default(),
             shortcuts,
@@ -961,14 +987,32 @@ mod tests {
     }
 
     #[test]
+    fn corners_default_off_and_parse() {
+        assert_eq!(
+            CornersSettings::default(),
+            CornersSettings {
+                enabled: false,
+                radius: 12
+            }
+        );
+        let raw: RawConfig = toml::from_str("[corners]\nenabled = true\nradius = 8\n").unwrap();
+        assert_eq!(
+            raw.corners,
+            CornersSettings {
+                enabled: true,
+                radius: 8
+            }
+        );
+    }
+
+    #[test]
     fn cursor_settings_default_to_none_but_can_be_set() {
         let raw: RawConfig = toml::from_str("").unwrap();
         assert_eq!(raw.cursor, CursorSettings::default());
         assert_eq!(raw.cursor.theme, None);
         assert_eq!(raw.cursor.size, None);
 
-        let raw: RawConfig =
-            toml::from_str("[cursor]\ntheme = \"Adwaita\"\nsize = 32\n").unwrap();
+        let raw: RawConfig = toml::from_str("[cursor]\ntheme = \"Adwaita\"\nsize = 32\n").unwrap();
         assert_eq!(raw.cursor.theme.as_deref(), Some("Adwaita"));
         assert_eq!(raw.cursor.size, Some(32));
     }

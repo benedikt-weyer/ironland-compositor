@@ -14,7 +14,10 @@ use smithay::{
     },
     desktop::{
         LayerSurface, layer_map_for_output,
-        space::{ConstrainBehavior, ConstrainReference, Space, SpaceRenderElements, constrain_space_element},
+        space::{
+            ConstrainBehavior, ConstrainReference, Space, SpaceRenderElements,
+            constrain_space_element,
+        },
     },
     output::Output,
     utils::{Point, Rectangle, Scale, Size},
@@ -25,6 +28,7 @@ use smithay::{
 use crate::drawing::FpsElement;
 use crate::{
     drawing::{CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement},
+    rounded_corners::GlesCapable,
     shell::{FullscreenSurface, WindowElement, WindowRenderElement},
 };
 
@@ -61,7 +65,7 @@ impl<R: Renderer> std::fmt::Debug for CustomRenderElements<R> {
 }
 
 smithay::backend::renderer::element::render_elements! {
-    pub OutputRenderElements<R, E> where R: ImportAll + ImportMem;
+    pub OutputRenderElements<R, E> where R: ImportAll + ImportMem + GlesCapable;
     Space=SpaceRenderElements<R, E>,
     Window=Wrap<E>,
     Custom=CustomRenderElements<R>,
@@ -88,9 +92,10 @@ pub fn space_preview_elements<'a, R, C>(
     output: &'a Output,
 ) -> impl Iterator<Item = C> + 'a
 where
-    R: Renderer + ImportAll + ImportMem,
+    R: Renderer + ImportAll + ImportMem + GlesCapable,
     R::TextureId: Clone + Send + 'static,
-    C: From<CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>>> + 'a,
+    C: From<CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>>>
+        + 'a,
 {
     let constrain_behavior = ConstrainBehavior {
         reference: ConstrainReference::BoundingBox,
@@ -154,9 +159,12 @@ pub fn output_elements<R>(
     blurred_background: Option<&MemoryRenderBuffer>,
     renderer: &mut R,
     show_window_preview: bool,
-) -> (Vec<OutputRenderElements<R, WindowRenderElement<R>>>, Color32F)
+) -> (
+    Vec<OutputRenderElements<R, WindowRenderElement<R>>>,
+    Color32F,
+)
 where
-    R: Renderer + ImportAll + ImportMem,
+    R: Renderer + ImportAll + ImportMem + GlesCapable,
     R::TextureId: Clone + Send + 'static,
 {
     if let Some(window) = output
@@ -196,15 +204,19 @@ where
         // that an opaque client-drawn background can't hide it. Top/overlay
         // layers (bars, popups) still render above every window.
         let layer_map = layer_map_for_output(output);
-        let (lower_layers, upper_layers): (Vec<&LayerSurface>, Vec<&LayerSurface>) = layer_map
-            .layers()
-            .rev()
-            .partition(|surface| matches!(surface.layer(), WlrLayer::Background | WlrLayer::Bottom));
+        let (lower_layers, upper_layers): (Vec<&LayerSurface>, Vec<&LayerSurface>) =
+            layer_map.layers().rev().partition(|surface| {
+                matches!(surface.layer(), WlrLayer::Background | WlrLayer::Bottom)
+            });
 
         let render_layers = |layers: &[&LayerSurface], renderer: &mut R| {
             layers
                 .iter()
-                .filter_map(|surface| layer_map.layer_geometry(surface).map(|geo| (geo.loc, *surface)))
+                .filter_map(|surface| {
+                    layer_map
+                        .layer_geometry(surface)
+                        .map(|geo| (geo.loc, *surface))
+                })
                 .flat_map(|(loc, surface)| {
                     AsRenderElements::<R>::render_elements::<WaylandSurfaceRenderElement<R>>(
                         surface,
@@ -255,11 +267,9 @@ where
                 ) else {
                     continue;
                 };
-                if let Some(element) = CropRenderElement::from_element(
-                    element,
-                    output_scale,
-                    crop_rect,
-                ) {
+                if let Some(element) =
+                    CropRenderElement::from_element(element, output_scale, crop_rect)
+                {
                     output_render_elements.push(OutputRenderElements::from(
                         CustomRenderElements::Blur(element),
                     ));
@@ -295,7 +305,7 @@ pub fn render_output<'a, 'd, R>(
     show_window_preview: bool,
 ) -> Result<RenderOutputResult<'d>, OutputDamageTrackerError<R::Error>>
 where
-    R: Renderer + ImportAll + ImportMem,
+    R: Renderer + ImportAll + ImportMem + GlesCapable,
     R::TextureId: Clone + Send + 'static,
 {
     let (elements, clear_color) = output_elements(

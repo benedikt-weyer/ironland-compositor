@@ -50,7 +50,7 @@ use tracing::{error, info, warn};
 use crate::state::{
     AnvilState, Backend, take_presentation_feedback, update_primary_scanout_output,
 };
-use crate::{drawing::*, render::*};
+use crate::{drawing::*, render::*, rounded_corners};
 
 pub const OUTPUT_NAME: &str = "winit";
 
@@ -372,6 +372,11 @@ pub fn run_winit() {
                     }
                 })
                 .unwrap_or_else(|_| std::ptr::null_mut());
+            rounded_corners::set_current(rounded_corners::CornersConfig {
+                enabled: state.config.corners.enabled,
+                radius: state.config.corners.radius as f32,
+            });
+
             let render_res = backend.bind().and_then(|(renderer, mut fb)| {
                 #[cfg(feature = "debug")]
                 if let Some(renderdoc) = renderdoc.as_mut() {

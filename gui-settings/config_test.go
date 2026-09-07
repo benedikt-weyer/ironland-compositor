@@ -28,6 +28,7 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 	cfg.TopBar = true
 	cfg.Appearance.DarkMode = true
 	cfg.Blur = BlurSettings{Enabled: true, Radius: 20}
+	cfg.Corners = CornersSettings{Enabled: true, Radius: 8}
 	cfg.Shortcuts["quit"] = []string{"ctrl+alt+q"}
 	cfg.Outputs["DP-1"] = OutputSettings{RefreshRate: 144_000}
 
@@ -63,6 +64,9 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 	}
 	if !loaded.Blur.Enabled || loaded.Blur.Radius != 20 {
 		t.Fatalf("loadConfig blur = %+v, want enabled radius 20", loaded.Blur)
+	}
+	if !loaded.Corners.Enabled || loaded.Corners.Radius != 8 {
+		t.Fatalf("loadConfig corners = %+v, want enabled radius 8", loaded.Corners)
 	}
 	if !reflect.DeepEqual(loaded.Shortcuts["quit"], []string{"ctrl+alt+q"}) {
 		t.Fatalf("loadConfig shortcuts[quit] = %v", loaded.Shortcuts["quit"])

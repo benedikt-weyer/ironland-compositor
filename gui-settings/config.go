@@ -32,6 +32,13 @@ type BlurSettings struct {
 	Radius  int  `toml:"radius"`
 }
 
+// CornersSettings mirrors `config::CornersSettings` in the compositor:
+// rounded corners on window content, drawn via a GLES shader.
+type CornersSettings struct {
+	Enabled bool `toml:"enabled"`
+	Radius  int  `toml:"radius"`
+}
+
 // CursorSettings mirrors `config::CursorSettings` in the compositor: an
 // empty Theme, or a Size of 0, means "fall back to the XCURSOR_THEME/
 // XCURSOR_SIZE environment variables, or the compositor's own built-in
@@ -85,6 +92,7 @@ type Config struct {
 	// Empty uses the compositor's built-in default wallpaper.
 	Wallpaper  string                    `toml:"wallpaper,omitempty"`
 	Blur       BlurSettings              `toml:"blur"`
+	Corners    CornersSettings           `toml:"corners"`
 	Cursor     CursorSettings            `toml:"cursor"`
 	Focus      FocusSettings             `toml:"focus"`
 	Appearance AppearanceSettings        `toml:"appearance"`
@@ -273,6 +281,7 @@ func defaultConfig() Config {
 		Browser:     "brave",
 		FileManager: "iron-file",
 		Blur:        BlurSettings{Radius: 12},
+		Corners:     CornersSettings{Radius: 12},
 		Shortcuts:   defaultShortcuts(),
 		Outputs:     map[string]OutputSettings{},
 		Workspaces:  defaultWorkspaceSettings(),
@@ -344,6 +353,10 @@ func loadConfig() (Config, string) {
 		cfg.Blur.Enabled = raw.Blur.Enabled
 		if raw.Blur.Radius > 0 {
 			cfg.Blur.Radius = raw.Blur.Radius
+		}
+		cfg.Corners.Enabled = raw.Corners.Enabled
+		if raw.Corners.Radius > 0 {
+			cfg.Corners.Radius = raw.Corners.Radius
 		}
 		cfg.Cursor = raw.Cursor
 		cfg.Focus = raw.Focus
