@@ -1,2 +1,2 @@
-# ironland-copositor
+# ironland-compositor
 ironland wayland compositor

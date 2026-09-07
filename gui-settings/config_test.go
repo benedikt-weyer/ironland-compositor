@@ -35,7 +35,7 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("saveConfig: %v", err)
 	}
-	if want := filepath.Join(dir, "ironland-copositor", "config.toml"); path != want {
+	if want := filepath.Join(dir, "ironland-compositor", "config.toml"); path != want {
 		t.Fatalf("saveConfig path = %q, want %q", path, want)
 	}
 

@@ -10,7 +10,7 @@
 use std::process::Command;
 
 /// `XDG_CURRENT_DESKTOP` value advertised to session services.
-const DESKTOP_NAME: &str = "ironland-copositor";
+const DESKTOP_NAME: &str = "ironland-compositor";
 
 /// Exports the session environment to `systemd --user` and D-Bus, then
 /// starts `graphical-session.target`. Call this once the Wayland socket
@@ -38,7 +38,7 @@ pub fn announce_session_start(socket_name: Option<&str>) {
     });
     // `graphical-session.target` itself refuses manual starts (it's meant to
     // be pulled in as a dependency, normally by a display manager's login
-    // session). Not started standalone from a tty, ironland-copositor has
+    // session). Not started standalone from a tty, ironland-compositor has
     // to kick it via NixOS's `nixos-fake-graphical-session.target`, its
     // documented stand-in for exactly this case. This is a no-op (and
     // harmless) on non-NixOS systems, where the unit simply doesn't exist.

@@ -1,16 +1,16 @@
 { config, lib, pkgs, ... }:
 
 let
-  cfg = config.services.ironland-copositor;
+  cfg = config.services.ironland-compositor;
   settingsFormat = pkgs.formats.toml { };
 in
 {
-  options.services.ironland-copositor.settings = lib.mkOption {
+  options.services.ironland-compositor.settings = lib.mkOption {
     type = settingsFormat.type;
     default = { };
     description = ''
-      Settings for ironland-copositor, written to
-      `/etc/ironland-copositor/config.toml` and read by the compositor at
+      Settings for ironland-compositor, written to
+      `/etc/ironland-compositor/config.toml` and read by the compositor at
       startup (a restart is needed to pick up changes). See the
       compositor's `src/config.rs` for the full schema: keyboard layout
       under `keyboard` (passed straight through to xkbcommon), the
@@ -78,6 +78,6 @@ in
     '';
   };
 
-  config.environment.etc."ironland-copositor/config.toml".source =
-    settingsFormat.generate "ironland-copositor-config.toml" cfg.settings;
+  config.environment.etc."ironland-compositor/config.toml".source =
+    settingsFormat.generate "ironland-compositor-config.toml" cfg.settings;
 }

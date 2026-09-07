@@ -1,4 +1,4 @@
-module ironland-copositor/gui-settings
+module ironland-compositor/gui-settings
 
 go 1.26.7
 

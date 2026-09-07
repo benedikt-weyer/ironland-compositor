@@ -23,14 +23,14 @@
 //!
 //! Only `activate` and `close` are wired up. `set_maximized`/
 //! `set_minimized`/`set_fullscreen` (and their `unset_*` counterparts) and
-//! `set_rectangle` are accepted but ignored: ironland-copositor's tiling
+//! `set_rectangle` are accepted but ignored: ironland-compositor's tiling
 //! model has no per-window maximized/minimized concept to report back (a
 //! tiled window isn't "maximized", and there's no minimize/hide state
 //! distinct from "on another workspace"), so a client is free to ask, it
 //! just won't see the corresponding `state` bit ever come back set.
 //!
 //! One known gap, mirroring one already documented on `ext_workspace`: the
-//! `parent` event (v3) is never sent (ironland-copositor doesn't track
+//! `parent` event (v3) is never sent (ironland-compositor doesn't track
 //! toplevel parenting) - not required by the protocol, simply never
 //! emitted. `output_enter`/`output_leave` *are* sent (see [`sync_instance`]),
 //! since the shell needs them to know which monitor a window is on.
@@ -416,7 +416,7 @@ impl<D: ForeignToplevelHandler> Dispatch2<ZwlrForeignToplevelHandleV1, D> for To
         match request {
             Request::Activate { .. } => state.activate_toplevel(&self.window),
             Request::Close => state.close_toplevel(&self.window),
-            // Not something ironland-copositor's tiling model has a notion
+            // Not something ironland-compositor's tiling model has a notion
             // of - see the module doc. Accepted, just never followed by a
             // matching `state` bit.
             Request::SetMaximized

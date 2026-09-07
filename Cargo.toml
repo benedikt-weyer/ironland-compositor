@@ -1,11 +1,11 @@
 [package]
-name = "ironland-copositor"
+name = "ironland-compositor"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
 [[bin]]
-name = "ironland-copositor"
+name = "ironland-compositor"
 path = "src/main.rs"
 
 # A small standalone Wayland client, not part of the compositor binary

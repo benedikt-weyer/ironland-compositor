@@ -281,7 +281,7 @@ func defaultConfig() Config {
 
 // userConfigPath is where this GUI saves settings: the same
 // `$XDG_CONFIG_HOME`/`~/.config` location the compositor checks before
-// falling back to `/etc/ironland-copositor/config.toml`, and one a normal
+// falling back to `/etc/ironland-compositor/config.toml`, and one a normal
 // user can write without root.
 func userConfigPath() (string, error) {
 	configHome := os.Getenv("XDG_CONFIG_HOME")
@@ -292,7 +292,7 @@ func userConfigPath() (string, error) {
 		}
 		configHome = filepath.Join(home, ".config")
 	}
-	return filepath.Join(configHome, "ironland-copositor", "config.toml"), nil
+	return filepath.Join(configHome, "ironland-compositor", "config.toml"), nil
 }
 
 // configSearchPath mirrors `config::config_search_path` in src/config.rs:
@@ -306,7 +306,7 @@ func configSearchPath() []string {
 	if userPath, err := userConfigPath(); err == nil {
 		paths = append(paths, userPath)
 	}
-	paths = append(paths, "/etc/ironland-copositor/config.toml")
+	paths = append(paths, "/etc/ironland-compositor/config.toml")
 	return paths
 }
 

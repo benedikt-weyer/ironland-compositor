@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <protocol name="ironland_shortcuts_v1">
   <copyright>
-    Copyright © 2026 the ironland-copositor contributors
+    Copyright © 2026 the ironland-compositor contributors
 
     Permission is hereby granted, free of charge, to any person obtaining a
     copy of this software and associated documentation files (the
@@ -25,7 +25,7 @@
 
   <description summary="named shortcuts triggered by compositor-configured keybinds">
     Lets a client register a named shortcut whose actual key combination is
-    configured compositor-side (see ironland-copositor's `[shortcuts]`
+    configured compositor-side (see ironland-compositor's `[shortcuts]`
     config), and be told when it's pressed and released.
 
     Unlike a generic global-shortcuts protocol, names are a flat namespace

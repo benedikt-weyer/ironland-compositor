@@ -1,4 +1,4 @@
-//! Server-side generated bindings for ironland-copositor's own small
+//! Server-side generated bindings for ironland-compositor's own small
 //! Wayland protocol extensions (XML under `protocols/`): named shortcuts,
 //! single-surface focus grabs, and per-window workspace membership (see
 //! `crate::shortcuts`, `crate::focus_grab`, and `crate::workspace_windows`).

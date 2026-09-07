@@ -22,13 +22,13 @@ fn main() {
     match arg.as_ref().map(|s| &s[..]) {
         #[cfg(feature = "winit")]
         Some("--winit") => {
-            tracing::info!("Starting ironland-copositor with winit backend");
-            ironland_copositor::winit::run_winit();
+            tracing::info!("Starting ironland-compositor with winit backend");
+            ironland_compositor::winit::run_winit();
         }
         #[cfg(feature = "udev")]
         Some("--tty-udev") => {
-            tracing::info!("Starting ironland-copositor on a tty using udev");
-            ironland_copositor::udev::run_udev();
+            tracing::info!("Starting ironland-compositor on a tty using udev");
+            ironland_compositor::udev::run_udev();
         }
         Some(other) => {
             tracing::error!("Unknown backend: {}", other);
@@ -36,7 +36,7 @@ fn main() {
         None => {
             #[allow(clippy::disallowed_macros)]
             {
-                println!("USAGE: ironland-copositor --backend");
+                println!("USAGE: ironland-compositor --backend");
                 println!();
                 println!("Possible backends are:");
                 for b in POSSIBLE_BACKENDS {

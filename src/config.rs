@@ -3,8 +3,8 @@
 //! Settings are read from the first of these that exists, in order:
 //!
 //! 1. `$IRONLAND_COMPOSITOR_CONFIG` (an explicit path, mainly for testing)
-//! 2. `$XDG_CONFIG_HOME/ironland-copositor/config.toml` (or `~/.config/...`)
-//! 3. `/etc/ironland-copositor/config.toml` (written by the NixOS module)
+//! 2. `$XDG_CONFIG_HOME/ironland-compositor/config.toml` (or `~/.config/...`)
+//! 3. `/etc/ironland-compositor/config.toml` (written by the NixOS module)
 //!
 //! None of these existing is not an error: the compositor falls back to the
 //! defaults below, which reproduce the shortcuts that used to be hardcoded.
@@ -476,10 +476,10 @@ fn config_search_path() -> Vec<PathBuf> {
         .map(PathBuf::from)
         .or_else(|_| env::var("HOME").map(|home| PathBuf::from(home).join(".config")));
     if let Ok(config_home) = config_home {
-        paths.push(config_home.join("ironland-copositor/config.toml"));
+        paths.push(config_home.join("ironland-compositor/config.toml"));
     }
 
-    paths.push(PathBuf::from("/etc/ironland-copositor/config.toml"));
+    paths.push(PathBuf::from("/etc/ironland-compositor/config.toml"));
 
     paths
 }

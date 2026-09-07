@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cat <<'EOF'
-ironland-copositor scripts
+ironland-compositor scripts
 
   run   Build and run the project (cargo run)
   help  Show this help message

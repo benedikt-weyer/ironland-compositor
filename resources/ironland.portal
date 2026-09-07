@@ -1,4 +1,4 @@
 [portal]
 DBusName=org.freedesktop.impl.portal.desktop.ironland
 Interfaces=org.freedesktop.impl.portal.GlobalShortcuts;
-UseIn=ironland-copositor
+UseIn=ironland-compositor

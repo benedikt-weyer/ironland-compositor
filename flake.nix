@@ -1,5 +1,5 @@
 {
-  description = "ironland-copositor dev environment";
+  description = "ironland-compositor dev environment";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -93,7 +93,7 @@
           # derivation's own `$out`, so it's generated here instead of
           # checked in statically.
           postFixup = ''
-            wrapProgram $out/bin/ironland-copositor --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xwayland ]}
+            wrapProgram $out/bin/ironland-compositor --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xwayland ]}
 
             install -Dm444 resources/ironland.portal \
               $out/share/xdg-desktop-portal/portals/ironland.portal
@@ -107,7 +107,7 @@
         });
 
         packages.settings-gui = pkgs.buildGoModule {
-          pname = "ironland-copositor-settings-gui";
+          pname = "ironland-compositor-settings-gui";
           version = "0.1.0";
           src = ./gui-settings;
           vendorHash = "sha256-IhRYaTLleaHKfqmicA8rYOdiEW41J7CxLIWKld4Ez0Q=";
@@ -195,7 +195,7 @@
             # would silently fail to spawn a terminal. Likewise the default
             # `browser` command ("brave") isn't installed below - only
             # firefox is - so super+b needs the same kind of override.
-            services.ironland-copositor.settings = {
+            services.ironland-compositor.settings = {
               terminal = "alacritty";
               browser = "firefox";
               keyboard.layout = "us";
@@ -229,7 +229,7 @@
             # both greetd's config parser and TOML's own quoting corner
             # cases.
             environment.etc."ironland-launch.sh".source = pkgs.writeShellScript "ironland-launch" ''
-              ironland-copositor --tty-udev &
+              ironland-compositor --tty-udev &
               compositor_pid=$!
 
               # The compositor doesn't run an autostart list itself, so bring
@@ -296,9 +296,9 @@
               # "Compositor Settings" entry for the Fyne GUI above, rather
               # than requiring it to be run by exact binary name.
               (pkgs.makeDesktopItem {
-                name = "ironland-copositor-settings";
+                name = "ironland-compositor-settings";
                 desktopName = "Compositor Settings";
-                comment = "Configure ironland-copositor's keyboard layout and shortcuts";
+                comment = "Configure ironland-compositor's keyboard layout and shortcuts";
                 exec = "${self.packages.x86_64-linux.settings-gui}/bin/gui-settings";
                 icon = "preferences-desktop-keyboard";
                 categories = [ "Settings" ];
@@ -338,7 +338,7 @@
                 # Set by scripts/run-vm; falls back to this repo's checkout
                 # location for a manual `nix build --impure`.
                 source = let v = builtins.getEnv "IRONLAND_VM_PROJECT_DIR"; in
-                  if v != "" then v else "/mnt/local-storage/git/low-level/ironland-copositor";
+                  if v != "" then v else "/mnt/local-storage/git/low-level/ironland-compositor";
                 target = "/home/dev/project";
               };
             };

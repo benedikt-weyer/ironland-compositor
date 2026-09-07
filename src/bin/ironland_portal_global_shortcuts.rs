@@ -15,7 +15,7 @@
 //!
 //! This backend has no shortcut-editor UI. A `BindShortcuts` request for a
 //! shortcut with no usable `preferred_trigger` option (missing, or not
-//! parseable by [`ironland_copositor::config::parse_binding`]'s syntax,
+//! parseable by [`ironland_compositor::config::parse_binding`]'s syntax,
 //! e.g. `"ctrl+alt+t"`) is accepted but left untriggered - it's listed by
 //! `ListShortcuts`/`ShortcutsChanged` with an empty `trigger_description`
 //! and simply never activates. A future version could add a real
@@ -23,7 +23,7 @@
 //! aren't supported.
 //!
 //! Bindings are persisted per `app_id` (see [`Store`]) to
-//! `$XDG_CONFIG_HOME/ironland-copositor/global-shortcuts.json` so a
+//! `$XDG_CONFIG_HOME/ironland-compositor/global-shortcuts.json` so a
 //! previously granted trigger survives both this process and the
 //! requesting app restarting - required by the portal spec. Note `app_id`
 //! is often empty for non-sandboxed apps (xdg-desktop-portal has no better
@@ -48,7 +48,7 @@ use zbus::interface;
 use zbus::object_server::SignalContext;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 
-use ironland_copositor::config::{KeyModifiers, parse_binding};
+use ironland_compositor::config::{KeyModifiers, parse_binding};
 
 /// Generated client bindings for `ironland-shortcuts-v1` (see
 /// `protocols/ironland-shortcuts-v1.xml`) - not in the `wayland-protocols`
@@ -289,7 +289,7 @@ fn store_path() -> PathBuf {
             PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".to_string())).join(".config")
         });
     config_home
-        .join("ironland-copositor")
+        .join("ironland-compositor")
         .join("global-shortcuts.json")
 }
 

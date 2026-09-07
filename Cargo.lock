@@ -888,7 +888,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ironland-copositor"
+name = "ironland-compositor"
 version = "0.1.0"
 dependencies = [
  "async-io",

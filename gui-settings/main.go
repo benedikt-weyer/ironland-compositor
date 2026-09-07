@@ -1,7 +1,7 @@
-// Command gui-settings is a small Fyne GUI for ironland-copositor's TOML
+// Command gui-settings is a small Fyne GUI for ironland-compositor's TOML
 // settings file (see src/config.rs in the main crate for the schema this
 // mirrors). It edits the user's own config file at
-// $XDG_CONFIG_HOME/ironland-copositor/config.toml (falling back to
+// $XDG_CONFIG_HOME/ironland-compositor/config.toml (falling back to
 // ~/.config/...), which the compositor watches ahead of the system-wide file
 // a NixOS module may have written to /etc. Saved changes apply live.
 package main
@@ -21,8 +21,8 @@ import (
 )
 
 func main() {
-	a := app.NewWithID("dev.ironland.copositor-settings")
-	w := a.NewWindow("ironland-copositor Settings")
+	a := app.NewWithID("dev.ironland.compositor-settings")
+	w := a.NewWindow("ironland-compositor Settings")
 
 	cfg, loadedFrom := loadConfig()
 
