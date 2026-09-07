@@ -3,6 +3,7 @@ name = "ironland-compositor"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+default-run = "ironland-compositor"
 
 [[bin]]
 name = "ironland-compositor"
