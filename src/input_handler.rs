@@ -253,8 +253,15 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 crate::ext_workspace::ext_workspace_sync(self);
             }
 
-            KeyAction::Shortcut(name) => crate::shortcuts::fire(self, &name, true),
-            KeyAction::ShortcutReleased(name) => crate::shortcuts::fire(self, &name, false),
+            KeyAction::Shortcut(name) => {
+                let output = self
+                    .space
+                    .output_under(self.pointer.current_location())
+                    .next()
+                    .map(|o| o.name());
+                crate::shortcuts::fire(self, &name, true, output.as_deref());
+            }
+            KeyAction::ShortcutReleased(name) => crate::shortcuts::fire(self, &name, false, None),
 
             _ => unreachable!(
                 "Common key action handler encountered backend specific action {:?}",

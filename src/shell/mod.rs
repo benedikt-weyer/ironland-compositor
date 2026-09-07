@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 #[cfg(feature = "xwayland")]
 use smithay::xwayland::XWaylandClientData;
@@ -21,7 +21,7 @@ use smithay::{
             protocol::{wl_buffer::WlBuffer, wl_output, wl_surface::WlSurface},
         },
     },
-    utils::{IsAlive, Logical, Point, Rectangle, Size},
+    utils::{IsAlive, Logical, Point, Rectangle, SERIAL_COUNTER, Size},
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -32,8 +32,8 @@ use smithay::{
         dmabuf::get_dmabuf,
         shell::{
             wlr_layer::{
-                Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler,
-                WlrLayerShellState,
+                KeyboardInteractivity, Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData,
+                WlrLayerShellHandler, WlrLayerShellState,
             },
             xdg::XdgToplevelSurfaceData,
         },
@@ -42,6 +42,7 @@ use smithay::{
 
 use crate::{
     ClientState,
+    focus::KeyboardFocusTarget,
     state::{AnvilState, Backend},
 };
 
@@ -240,6 +241,8 @@ impl<BackendData: Backend> CompositorHandler for AnvilState<BackendData> {
             });
         }
 
+        self.sync_layer_keyboard_focus(surface);
+
         ensure_initial_configure(surface, &self.space, &mut self.popups)
     }
 }
@@ -284,6 +287,58 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             .elements()
             .find(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
             .cloned()
+    }
+
+    /// Grants keyboard focus to a layer-shell surface the moment its
+    /// `keyboard_interactivity` (see `wlr-layer-shell-unstable-v1`)
+    /// transitions from `None` to `Exclusive`/`OnDemand` on commit -
+    /// mirroring how a newly mapped toplevel window is focused on map,
+    /// since nothing else does this for a layer surface.
+    ///
+    /// Without this, a client that shows an interactive overlay (e.g. this
+    /// shell's launcher) by flipping its *already-mapped* surface's
+    /// interactivity from `None` to `OnDemand` never actually receives
+    /// keyboard focus: `Exclusive` at least gets every keystroke forwarded
+    /// regardless of focus (see the key-press routing in
+    /// `input_handler::AnvilState::process_input_event`), but `OnDemand`
+    /// has no such fallback - `update_keyboard_focus` only grants it on an
+    /// explicit click, leaving keyboard focus (and so all text input) on
+    /// whatever was focused before until the user clicks inside it.
+    ///
+    /// Edge-triggered (tracked per-surface via a `Cell` in its data map, not
+    /// "grant once per surface ever") so re-opening after the interactivity
+    /// dropped back to `None` (e.g. the launcher closing) grants focus again
+    /// next time, but a surface that stays interactive across many commits -
+    /// every keystroke's redraw, for instance - doesn't have this constantly
+    /// re-assert focus and fight a deliberate click elsewhere.
+    fn sync_layer_keyboard_focus(&mut self, surface: &WlSurface) {
+        let Some(layer) = self.space.outputs().find_map(|o| {
+            layer_map_for_output(o)
+                .layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
+                .cloned()
+        }) else {
+            return;
+        };
+
+        let interactivity = layer.cached_state().keyboard_interactivity;
+        let was_none = with_states(surface, |states| {
+            states
+                .data_map
+                .insert_if_missing(|| Cell::new(KeyboardInteractivity::None));
+            let previous = states
+                .data_map
+                .get::<Cell<KeyboardInteractivity>>()
+                .unwrap()
+                .replace(interactivity);
+            previous == KeyboardInteractivity::None
+        });
+
+        if was_none && interactivity != KeyboardInteractivity::None {
+            if let Some(keyboard) = self.seat.get_keyboard() {
+                let target: KeyboardFocusTarget = layer.into();
+                keyboard.set_focus(self, Some(target), SERIAL_COUNTER.next_serial());
+            }
+        }
     }
 }
 

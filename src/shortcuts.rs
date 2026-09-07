@@ -114,11 +114,16 @@ pub struct ShortcutToken {
 /// Sends `pressed`/`released` to every client object registered for
 /// `name`. A name nothing has registered (or that isn't bound to any
 /// configured keybinding) is simply a no-op - see `config::Config::shortcuts`.
-pub fn fire<D: ShortcutsHandler>(state: &mut D, name: &str, pressed: bool) {
+///
+/// `output` is the `wl_output` name the pointer was over at the moment of
+/// the press (see `input_handler`'s call site), so a client showing
+/// something in response (a launcher) can place it there; ignored for a
+/// release.
+pub fn fire<D: ShortcutsHandler>(state: &mut D, name: &str, pressed: bool, output: Option<&str>) {
     for entry in &state.shortcuts_state().shortcuts {
         if entry.name == name {
             if pressed {
-                entry.resource.pressed();
+                entry.resource.pressed(output.map(str::to_string));
             } else {
                 entry.resource.released();
             }

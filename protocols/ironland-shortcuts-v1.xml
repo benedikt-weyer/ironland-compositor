@@ -40,6 +40,10 @@
     `ironland-portal-global-shortcuts`), which negotiates triggers with
     arbitrary applications itself and only needs the compositor to grab the
     resulting key combination.
+
+    `ironland_shortcut_v1` version 2 adds the `output` argument to
+    `pressed`, so a client that shows something in response (e.g. a
+    launcher) can place it on whichever output currently has the pointer.
   </description>
 
   <interface name="ironland_shortcuts_manager_v1" version="2">
@@ -87,7 +91,7 @@
     </request>
   </interface>
 
-  <interface name="ironland_shortcut_v1" version="1">
+  <interface name="ironland_shortcut_v1" version="2">
     <description summary="a single named shortcut">
       Reports presses and releases of the key combination the compositor
       has configured for this shortcut's name.
@@ -95,6 +99,8 @@
 
     <event name="pressed">
       <description summary="the shortcut's key combination was pressed"/>
+      <arg name="output" type="string" allow-null="true" since="2"
+           summary="wl_output name (e.g. eDP-1) the pointer was over when this fired, if any"/>
     </event>
 
     <event name="released">

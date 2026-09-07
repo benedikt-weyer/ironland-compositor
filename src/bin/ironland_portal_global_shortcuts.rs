@@ -183,7 +183,7 @@ impl Dispatch<IronlandShortcutV1, ShortcutUserData> for WaylandApp {
         _qh: &QueueHandle<Self>,
     ) {
         let event = match event {
-            ironland_shortcut_v1::Event::Pressed => PortalEvent::Activated {
+            ironland_shortcut_v1::Event::Pressed { output: _ } => PortalEvent::Activated {
                 session_handle: data.session_handle.clone(),
                 shortcut_id: data.shortcut_id.clone(),
             },
