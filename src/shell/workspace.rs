@@ -378,6 +378,11 @@ fn restore_fullscreen<B: Backend>(state: &mut AnvilState<B>, output: &Output, wi
         toplevel.with_pending_state(|s| {
             s.states.set(xdg_toplevel::State::Fullscreen);
             s.size = Some(geometry.size);
+            // See the comment on the same assignment in
+            // `shell::xdg::fullscreen_request` - without this a client that
+            // treats `bounds` as a hard cap leaves a margin at the
+            // bottom/right, sized to whatever the shell reserves there.
+            s.bounds = Some(geometry.size);
         });
         if toplevel.is_initial_configure_sent() {
             toplevel.send_configure();

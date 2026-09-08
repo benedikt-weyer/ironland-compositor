@@ -317,6 +317,16 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
             surface.with_pending_state(|state| {
                 state.states.set(xdg_toplevel::State::Fullscreen);
                 state.size = Some(geometry.size);
+                // `bounds` is a leftover from this window's initial
+                // placement (see `place_new_window`), where it's set to the
+                // *non-exclusive* zone - i.e. the output minus whatever
+                // space the shell's bar/dock/border reserve. Left as-is, a
+                // client that treats `bounds` as a hard cap even while
+                // fullscreen (rather than deferring to `size`) ends up
+                // rendering short of the screen's bottom/right edge by
+                // exactly that reserved amount. Fullscreen covers the whole
+                // output, so the bound needs to match.
+                state.bounds = Some(geometry.size);
                 state.fullscreen_output = wl_output;
             });
             output.user_data().insert_if_missing(FullscreenSurface::default);
@@ -346,6 +356,13 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
         });
         if let Some(output) = ret {
             let output = Output::from_resource(&output).unwrap();
+            // Restore `bounds` to the non-exclusive zone (matching
+            // `place_new_window`'s initial value) now that the window no
+            // longer covers the whole output.
+            let bounds = layer_map_for_output(&output).non_exclusive_zone().size;
+            surface.with_pending_state(|state| {
+                state.bounds = Some(bounds);
+            });
             if let Some(fullscreen) = output.user_data().get::<FullscreenSurface>() {
                 trace!("Unfullscreening: {:?}", fullscreen.get());
                 fullscreen.clear();
