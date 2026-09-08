@@ -23,7 +23,7 @@ use crate::{
     state::{AnvilState, Backend},
 };
 
-use super::WindowElement;
+use super::{FullscreenSurface, WindowElement};
 
 /// How much a keyboard-driven resize changes a split's ratio per key press.
 const RESIZE_STEP: f32 = 0.05;
@@ -550,19 +550,29 @@ pub fn apply_layout<BackendData: Backend>(state: &mut AnvilState<BackendData>, o
     let idx = WorkspaceState::get(output).active();
     let area = tiling_area(&state.space, output, state.config.gaps.outer as i32);
     let rects = TilingState::tree(output, idx).layout(area, state.config.gaps.inner as i32);
+    let fullscreen = output
+        .user_data()
+        .get::<FullscreenSurface>()
+        .and_then(|f| f.get());
     for (window, rect) in rects {
-        #[allow(irrefutable_let_patterns)]
-        if let Some(toplevel) = window.0.toplevel() {
-            let changed = toplevel.with_pending_state(|s| {
-                if s.size != Some(rect.size) {
-                    s.size = Some(rect.size);
-                    true
-                } else {
-                    false
+        // A fullscreen window's toplevel size is driven by
+        // `render::output_elements`/`shell::xdg`/`shell::x11`, not by its
+        // tile slot - resizing it down here would fight whatever configure
+        // made it fullscreen in the first place.
+        if fullscreen.as_ref() != Some(&window) {
+            #[allow(irrefutable_let_patterns)]
+            if let Some(toplevel) = window.0.toplevel() {
+                let changed = toplevel.with_pending_state(|s| {
+                    if s.size != Some(rect.size) {
+                        s.size = Some(rect.size);
+                        true
+                    } else {
+                        false
+                    }
+                });
+                if changed && toplevel.is_initial_configure_sent() {
+                    toplevel.send_pending_configure();
                 }
-            });
-            if changed && toplevel.is_initial_configure_sent() {
-                toplevel.send_pending_configure();
             }
         }
         state.space.map_element(window, rect.loc, false);

@@ -27,6 +27,7 @@ use std::time::Instant;
 use smithay::{
     desktop::Space,
     output::Output,
+    reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
     utils::{IsAlive, Logical, Point, SERIAL_COUNTER},
 };
 
@@ -35,7 +36,7 @@ use crate::{
     state::{AnvilState, Backend},
 };
 
-use super::{WindowElement, tiling};
+use super::{FullscreenSurface, WindowElement, tiling};
 
 /// How long the workspace-dot overlay stays on screen after a switch.
 pub const OVERLAY_DURATION_MS: u64 = 1200;
@@ -48,6 +49,9 @@ struct WindowHome {
     output: RefCell<Option<Output>>,
     index: RefCell<usize>,
     floating_pos: RefCell<Option<Point<i32, Logical>>>,
+    /// Whether this window was the output's fullscreen surface at the last
+    /// time its workspace was hidden - restored by [`show_workspace`].
+    fullscreen: RefCell<bool>,
 }
 
 impl WindowHome {
@@ -269,11 +273,23 @@ fn show_overlay<B: Backend>(state: &mut AnvilState<B>) {
 
 /// Unmaps every window (tiled or floating) belonging to `output`'s
 /// workspace `idx`, remembering floating windows' positions first.
+///
+/// If one of them is `output`'s current fullscreen surface, that's also
+/// cleared here - otherwise `render::output_elements` (which checks
+/// `FullscreenSurface` before anything else) would keep drawing the now
+/// unmapped window's last frame over whatever workspace replaces it.
+/// [`show_workspace`] restores it if the window is still shown again later.
 fn hide_workspace<B: Backend>(state: &mut AnvilState<B>, output: &Output, idx: usize) {
+    let current_fullscreen = output
+        .user_data()
+        .get::<FullscreenSurface>()
+        .and_then(|f| f.get());
+    let mut unfullscreened = false;
+
     let tiled = tiling::TilingState::tree(output, idx).windows();
     for window in &tiled {
         if window.alive() {
-            state.space.unmap_elem(window);
+            unfullscreened |= hide_window(state, output, window, current_fullscreen.as_ref());
         }
     }
 
@@ -285,30 +301,104 @@ fn hide_workspace<B: Backend>(state: &mut AnvilState<B>, output: &Output, idx: u
         if let Some(loc) = state.space.element_location(window) {
             *WindowHome::get(window).floating_pos.borrow_mut() = Some(loc);
         }
-        state.space.unmap_elem(window);
+        unfullscreened |= hide_window(state, output, window, current_fullscreen.as_ref());
     }
+
+    if unfullscreened {
+        state.backend_data.reset_buffers(output);
+        crate::foreign_toplevel::sync(state);
+        crate::ext_workspace::ext_workspace_sync(state);
+        crate::workspace_windows::sync(state);
+    }
+}
+
+/// Unmaps a single window, recording (and clearing) whether it was
+/// `output`'s fullscreen surface. Returns whether it was.
+fn hide_window<B: Backend>(
+    state: &mut AnvilState<B>,
+    output: &Output,
+    window: &WindowElement,
+    current_fullscreen: Option<&WindowElement>,
+) -> bool {
+    state.space.unmap_elem(window);
+
+    let was_fullscreen = current_fullscreen == Some(window);
+    *WindowHome::get(window).fullscreen.borrow_mut() = was_fullscreen;
+    if was_fullscreen
+        && let Some(fullscreen) = output.user_data().get::<FullscreenSurface>()
+    {
+        fullscreen.clear();
+    }
+    was_fullscreen
 }
 
 /// Maps every (alive) window belonging to `output`'s workspace `idx` back
 /// into the space: tiled windows are reflowed, floating ones restored to
-/// their last known position.
+/// their last known position. Whichever of them (if any) was fullscreen when
+/// [`hide_workspace`] hid this workspace becomes `output`'s fullscreen
+/// surface again.
 fn show_workspace<B: Backend>(state: &mut AnvilState<B>, output: &Output, idx: usize) {
     // `apply_layout` reflows `output`'s *active* workspace, which by the
     // time this runs is already `idx` (the caller updates `active` first).
     tiling::apply_layout(state, output);
+
+    let tiled = tiling::TilingState::tree(output, idx).windows();
 
     let ws = WorkspaceState::get(output);
     if let Some(slot) = ws.floating.borrow_mut().get_mut(idx) {
         slot.retain(|w| w.alive());
     }
     let floating = ws.floating_at(idx);
-    for window in floating {
-        let pos = WindowHome::get(&window)
+    for window in &floating {
+        let pos = WindowHome::get(window)
             .floating_pos
             .borrow()
             .unwrap_or_default();
-        state.space.map_element(window, pos, false);
+        state.space.map_element(window.clone(), pos, false);
     }
+
+    if let Some(window) = tiled
+        .iter()
+        .chain(floating.iter())
+        .find(|w| w.alive() && *WindowHome::get(w).fullscreen.borrow())
+    {
+        restore_fullscreen(state, output, &window.clone());
+    }
+}
+
+/// Re-fullscreens `window` on `output` after its workspace becomes visible
+/// again, undoing what [`hide_workspace`] did when it was hidden.
+fn restore_fullscreen<B: Backend>(state: &mut AnvilState<B>, output: &Output, window: &WindowElement) {
+    let Some(geometry) = state.space.output_geometry(output) else {
+        return;
+    };
+
+    #[allow(irrefutable_let_patterns)]
+    if let Some(toplevel) = window.0.toplevel() {
+        toplevel.with_pending_state(|s| {
+            s.states.set(xdg_toplevel::State::Fullscreen);
+            s.size = Some(geometry.size);
+        });
+        if toplevel.is_initial_configure_sent() {
+            toplevel.send_configure();
+        }
+    }
+    #[cfg(feature = "xwayland")]
+    if let Some(x11) = window.0.x11_surface() {
+        let _ = x11.set_fullscreen(true);
+        let _ = x11.configure(geometry);
+    }
+
+    output.user_data().insert_if_missing(FullscreenSurface::default);
+    output
+        .user_data()
+        .get::<FullscreenSurface>()
+        .unwrap()
+        .set(window.clone());
+
+    crate::foreign_toplevel::sync(state);
+    crate::ext_workspace::ext_workspace_sync(state);
+    crate::workspace_windows::sync(state);
 }
 
 pub(crate) fn focus_first_in_workspace<B: Backend>(state: &mut AnvilState<B>, output: &Output, idx: usize) {
