@@ -626,11 +626,22 @@ func buildWorkspacesTab(cfg *Config) fyne.CanvasObject {
 	})
 	overlay.SetChecked(cfg.Workspaces.Overlay)
 
+	transitionMs := widget.NewEntry()
+	transitionMs.SetText(fmt.Sprintf("%d", cfg.Workspaces.TransitionMs))
+	transitionMs.OnChanged = func(s string) {
+		var n int
+		if _, err := fmt.Sscanf(s, "%d", &n); err == nil && n >= 0 {
+			cfg.Workspaces.TransitionMs = n
+		}
+		resets.refresh()
+	}
+
 	form := widget.NewForm(
 		widget.NewFormItem("Layout", resets.item(modeSelect, func() bool { return cfg.Workspaces.Mode != defaults.Mode }, func() { modeSelect.SetSelected(modeLabels[defaults.Mode]) })),
 		widget.NewFormItem("Starting workspace count", resets.item(count, func() bool { return cfg.Workspaces.Count != defaults.Count }, func() { count.SetText(fmt.Sprintf("%d", defaults.Count)) })),
 		widget.NewFormItem("Dynamic count", resets.item(dynamic, func() bool { return cfg.Workspaces.Dynamic != defaults.Dynamic }, func() { dynamic.SetChecked(defaults.Dynamic) })),
 		widget.NewFormItem("On-screen overlay", resets.item(overlay, func() bool { return cfg.Workspaces.Overlay != defaults.Overlay }, func() { overlay.SetChecked(defaults.Overlay) })),
+		widget.NewFormItem("Switch animation (ms, 0 = off)", resets.item(transitionMs, func() bool { return cfg.Workspaces.TransitionMs != defaults.TransitionMs }, func() { transitionMs.SetText(fmt.Sprintf("%d", defaults.TransitionMs)) })),
 	)
 
 	hint := widget.NewLabel(

@@ -22,7 +22,7 @@
 //!   Otherwise the workspace count is fixed.
 
 use std::cell::{RefCell, RefMut};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use smithay::{
     desktop::Space,
@@ -332,18 +332,11 @@ fn hide_window<B: Backend>(
     was_fullscreen
 }
 
-/// Maps every (alive) window belonging to `output`'s workspace `idx` back
-/// into the space: tiled windows are reflowed, floating ones restored to
-/// their last known position. Whichever of them (if any) was fullscreen when
-/// [`hide_workspace`] hid this workspace becomes `output`'s fullscreen
-/// surface again.
-fn show_workspace<B: Backend>(state: &mut AnvilState<B>, output: &Output, idx: usize) {
-    // `apply_layout` reflows `output`'s *active* workspace, which by the
-    // time this runs is already `idx` (the caller updates `active` first).
-    tiling::apply_layout(state, output);
-
-    let tiled = tiling::TilingState::tree(output, idx).windows();
-
+/// Maps `output`'s workspace `idx` floating windows back into the space at
+/// their remembered positions (first dropping any that died while hidden).
+/// Returns them, for callers that need the full window list alongside the
+/// tiled ones.
+fn map_floating<B: Backend>(state: &mut AnvilState<B>, output: &Output, idx: usize) -> Vec<WindowElement> {
     let ws = WorkspaceState::get(output);
     if let Some(slot) = ws.floating.borrow_mut().get_mut(idx) {
         slot.retain(|w| w.alive());
@@ -356,6 +349,21 @@ fn show_workspace<B: Backend>(state: &mut AnvilState<B>, output: &Output, idx: u
             .unwrap_or_default();
         state.space.map_element(window.clone(), pos, false);
     }
+    floating
+}
+
+/// Maps every (alive) window belonging to `output`'s workspace `idx` back
+/// into the space: tiled windows are reflowed, floating ones restored to
+/// their last known position. Whichever of them (if any) was fullscreen when
+/// [`hide_workspace`] hid this workspace becomes `output`'s fullscreen
+/// surface again.
+fn show_workspace<B: Backend>(state: &mut AnvilState<B>, output: &Output, idx: usize) {
+    // `apply_layout` reflows `output`'s *active* workspace, which by the
+    // time this runs is already `idx` (the caller updates `active` first).
+    tiling::apply_layout(state, output);
+
+    let tiled = tiling::TilingState::tree(output, idx).windows();
+    let floating = map_floating(state, output, idx);
 
     if let Some(window) = tiled
         .iter()
@@ -406,6 +414,209 @@ fn restore_fullscreen<B: Backend>(state: &mut AnvilState<B>, output: &Output, wi
     crate::workspace_windows::sync(state);
 }
 
+/// An in-flight slide animation for a workspace switch on one output.
+/// Outgoing windows stay mapped and slide toward `dir`; incoming windows
+/// (already mapped off-screen by [`start_transition`]) slide in from the
+/// opposite edge. Only positions animate - sizes are fixed once, by the same
+/// [`tiling::apply_layout`] call [`show_workspace`] would otherwise have
+/// made.
+struct WorkspaceTransition {
+    start: Instant,
+    duration: Duration,
+    /// `1` if `new_idx > old_idx` (incoming slides in from the right, i.e.
+    /// positive x), `-1` otherwise.
+    dir: i32,
+    /// Slide distance in logical pixels - `output`'s width.
+    distance: i32,
+    /// Each window's resting position before the switch, which it animates
+    /// away from.
+    outgoing: Vec<(WindowElement, Point<i32, Logical>)>,
+    /// Each window's resting position after the switch, which it animates
+    /// toward.
+    incoming: Vec<(WindowElement, Point<i32, Logical>)>,
+}
+
+#[derive(Default)]
+struct WorkspaceTransitionSlot(RefCell<Option<WorkspaceTransition>>);
+
+impl WorkspaceTransitionSlot {
+    fn get(output: &Output) -> &WorkspaceTransitionSlot {
+        output
+            .user_data()
+            .insert_if_missing(WorkspaceTransitionSlot::default);
+        output.user_data().get::<WorkspaceTransitionSlot>().unwrap()
+    }
+}
+
+/// Starts an animated slide from `old_idx` to `new_idx` on `output`, mapping
+/// `new_idx`'s windows off-screen so [`advance_transitions`] can animate
+/// both sets in from there. Returns whether it did - on `false` (animation
+/// disabled, nothing to animate, or a fullscreen window is involved), the
+/// caller falls back to the instant [`hide_workspace`]/[`show_workspace`]
+/// pair.
+fn start_transition<B: Backend>(
+    state: &mut AnvilState<B>,
+    output: &Output,
+    old_idx: usize,
+    new_idx: usize,
+) -> bool {
+    let duration_ms = state.config.workspaces.transition_ms;
+    if duration_ms == 0 {
+        return false;
+    }
+
+    // Fullscreen rendering bypasses `space` positions entirely (see
+    // `render::output_elements`, which draws the fullscreen surface at a
+    // fixed (0, 0) regardless of where it's mapped), so animating a
+    // position here would be invisible while skipping the fullscreen
+    // bookkeeping `hide_workspace`/`show_workspace` do - simpler to just not
+    // animate a switch that involves one.
+    if output
+        .user_data()
+        .get::<FullscreenSurface>()
+        .and_then(|f| f.get())
+        .is_some()
+    {
+        return false;
+    }
+
+    let Some(distance) = state.space.output_geometry(output).map(|g| g.size.w) else {
+        return false;
+    };
+    if distance == 0 {
+        return false;
+    }
+
+    // A switch landing mid-animation of a previous one finishes that one
+    // first, so its incoming windows' current (mid-slide) position isn't
+    // mistaken for their resting one.
+    finalize_transition(state, output);
+
+    let outgoing: Vec<(WindowElement, Point<i32, Logical>)> = tiling::TilingState::tree(output, old_idx)
+        .windows()
+        .into_iter()
+        .chain(WorkspaceState::get(output).floating_at(old_idx))
+        .filter(|w| w.alive())
+        .filter_map(|w| state.space.element_location(&w).map(|loc| (w, loc)))
+        .collect();
+
+    // `apply_layout` reflows `output`'s *active* workspace, which by the
+    // time this runs is already `new_idx` (the caller updates `active`
+    // first, same as `show_workspace` relies on).
+    tiling::apply_layout(state, output);
+    let tiled_incoming = tiling::TilingState::tree(output, new_idx).windows();
+    let floating_incoming = map_floating(state, output, new_idx);
+
+    let incoming: Vec<(WindowElement, Point<i32, Logical>)> = tiled_incoming
+        .into_iter()
+        .chain(floating_incoming)
+        .filter(|w| w.alive())
+        .filter_map(|w| state.space.element_location(&w).map(|loc| (w, loc)))
+        .collect();
+
+    if outgoing.is_empty() && incoming.is_empty() {
+        return false;
+    }
+
+    let dir: i32 = if new_idx > old_idx { 1 } else { -1 };
+    let offscreen = Point::from((dir * distance, 0));
+    for (window, target) in &incoming {
+        state.space.map_element(window.clone(), *target + offscreen, false);
+    }
+
+    *WorkspaceTransitionSlot::get(output).0.borrow_mut() = Some(WorkspaceTransition {
+        start: Instant::now(),
+        duration: Duration::from_millis(duration_ms as u64),
+        dir,
+        distance,
+        outgoing,
+        incoming,
+    });
+
+    true
+}
+
+/// Advances every in-flight workspace-switch animation on `output` by one
+/// frame. Called from `AnvilState::pre_repaint`, so windows visibly slide
+/// under both backends' render loops without either needing to know
+/// animations exist.
+pub(crate) fn advance_transitions<B: Backend>(state: &mut AnvilState<B>, output: &Output) {
+    struct Snapshot {
+        elapsed: Duration,
+        duration: Duration,
+        dir: i32,
+        distance: i32,
+        outgoing: Vec<(WindowElement, Point<i32, Logical>)>,
+        incoming: Vec<(WindowElement, Point<i32, Logical>)>,
+    }
+
+    let snapshot = {
+        let transition = WorkspaceTransitionSlot::get(output).0.borrow();
+        transition.as_ref().map(|t| Snapshot {
+            elapsed: t.start.elapsed(),
+            duration: t.duration,
+            dir: t.dir,
+            distance: t.distance,
+            outgoing: t.outgoing.clone(),
+            incoming: t.incoming.clone(),
+        })
+    };
+    let Some(snapshot) = snapshot else {
+        return;
+    };
+
+    if snapshot.elapsed >= snapshot.duration {
+        finalize_transition(state, output);
+        return;
+    }
+
+    let progress = snapshot.elapsed.as_secs_f32() / snapshot.duration.as_secs_f32();
+    let eased = ease_out_cubic(progress.clamp(0.0, 1.0));
+    let outgoing_shift = (snapshot.dir as f32 * snapshot.distance as f32 * eased).round() as i32;
+    let incoming_shift = (snapshot.dir as f32 * snapshot.distance as f32 * (1.0 - eased)).round() as i32;
+
+    for (window, home) in &snapshot.outgoing {
+        if window.alive() {
+            state
+                .space
+                .map_element(window.clone(), *home + Point::from((outgoing_shift, 0)), false);
+        }
+    }
+    for (window, target) in &snapshot.incoming {
+        if window.alive() {
+            state
+                .space
+                .map_element(window.clone(), *target + Point::from((incoming_shift, 0)), false);
+        }
+    }
+}
+
+/// Ends `output`'s in-flight transition (if any) immediately: unmaps the
+/// outgoing windows and snaps the incoming ones to their exact resting
+/// position - the same end state an instant
+/// [`hide_workspace`]/[`show_workspace`] pair would have left behind.
+fn finalize_transition<B: Backend>(state: &mut AnvilState<B>, output: &Output) {
+    let Some(transition) = WorkspaceTransitionSlot::get(output).0.borrow_mut().take() else {
+        return;
+    };
+
+    for (window, _) in &transition.outgoing {
+        if window.alive() {
+            state.space.unmap_elem(window);
+        }
+    }
+    for (window, target) in &transition.incoming {
+        if window.alive() {
+            state.space.map_element(window.clone(), *target, false);
+        }
+    }
+}
+
+fn ease_out_cubic(t: f32) -> f32 {
+    let f = t - 1.0;
+    f * f * f + 1.0
+}
+
 pub(crate) fn focus_first_in_workspace<B: Backend>(state: &mut AnvilState<B>, output: &Output, idx: usize) {
     let candidate = tiling::TilingState::tree(output, idx)
         .windows()
@@ -454,15 +665,19 @@ fn set_active<B: Backend>(state: &mut AnvilState<B>, output: &Output, new_idx: u
         return;
     }
 
-    hide_workspace(state, output, old_idx);
-
     let ws = WorkspaceState::get(output);
     *ws.active.borrow_mut() = new_idx;
     if new_idx + 1 > ws.count() {
         *ws.count.borrow_mut() = new_idx + 1;
     }
 
-    show_workspace(state, output, new_idx);
+    // `start_transition` (like `show_workspace`) reflows `output`'s
+    // *active* workspace via `apply_layout`, which is why `active` is
+    // updated above before either runs.
+    if !start_transition(state, output, old_idx, new_idx) {
+        hide_workspace(state, output, old_idx);
+        show_workspace(state, output, new_idx);
+    }
     focus_first_in_workspace(state, output, new_idx);
 
     if state.config.workspaces.dynamic {

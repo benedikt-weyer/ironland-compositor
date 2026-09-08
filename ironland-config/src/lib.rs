@@ -103,6 +103,10 @@ pub struct WorkspaceSettings {
     /// Whether to flash a row of dots (like GNOME's workspace switcher) on
     /// screen briefly whenever the active workspace changes.
     pub overlay: bool,
+    /// How long windows take to slide to/from the next workspace on a
+    /// switch, in milliseconds. `0` disables the animation - the switch is
+    /// instant, as it was before this setting existed.
+    pub transition_ms: u32,
 }
 
 impl Default for WorkspaceSettings {
@@ -112,6 +116,7 @@ impl Default for WorkspaceSettings {
             count: 4,
             dynamic: false,
             overlay: true,
+            transition_ms: 220,
         }
     }
 }

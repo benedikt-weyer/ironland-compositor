@@ -1153,6 +1153,8 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
     pub fn pre_repaint(&mut self, output: &Output, frame_target: impl Into<Time<Monotonic>>) {
         let frame_target = frame_target.into();
 
+        crate::shell::workspace::advance_transitions(self, output);
+
         #[allow(clippy::mutable_key_type)]
         let mut clients: HashMap<ClientId, Client> = HashMap::new();
         self.space.elements().for_each(|window| {

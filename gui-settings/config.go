@@ -81,6 +81,9 @@ type WorkspaceSettings struct {
 	Count   int    `json:"count"`
 	Dynamic bool   `json:"dynamic"`
 	Overlay bool   `json:"overlay"`
+	// TransitionMs is how long windows take to slide to/from the next
+	// workspace on a switch, in milliseconds. 0 disables the animation.
+	TransitionMs int `json:"transition_ms"`
 }
 
 // FocusSettings mirrors `ironland_config::FocusSettings`: both default off,
