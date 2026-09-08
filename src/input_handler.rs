@@ -263,6 +263,16 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             }
             KeyAction::ShortcutReleased(name) => crate::shortcuts::fire(self, &name, false, None),
 
+            KeyAction::ShortcutTap(name) => {
+                let output = self
+                    .space
+                    .output_under(self.pointer.current_location())
+                    .next()
+                    .map(|o| o.name());
+                crate::shortcuts::fire(self, &name, true, output.as_deref());
+                crate::shortcuts::fire(self, &name, false, None);
+            }
+
             _ => unreachable!(
                 "Common key action handler encountered backend specific action {:?}",
                 action
@@ -351,6 +361,9 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                             let was_tap = data.super_tap_pending == Some(true);
                             data.super_tap_pending = None;
                             match (was_tap, inhibited, &data.super_tap_action) {
+                                (true, false, Some(KeyAction::Shortcut(name))) => {
+                                    FilterResult::Intercept(KeyAction::ShortcutTap(name.clone()))
+                                }
                                 (true, false, Some(action)) => {
                                     FilterResult::Intercept(action.clone())
                                 }
@@ -903,7 +916,8 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     | KeyAction::SwitchWorkspace(_)
                     | KeyAction::MoveWindowWorkspace(_)
                     | KeyAction::Shortcut(_)
-                    | KeyAction::ShortcutReleased(_) => self.process_common_key_action(action),
+                    | KeyAction::ShortcutReleased(_)
+                    | KeyAction::ShortcutTap(_) => self.process_common_key_action(action),
 
                     _ => tracing::warn!(
                         ?action,
@@ -1163,7 +1177,8 @@ impl AnvilState<UdevData> {
                     | KeyAction::SwitchWorkspace(_)
                     | KeyAction::MoveWindowWorkspace(_)
                     | KeyAction::Shortcut(_)
-                    | KeyAction::ShortcutReleased(_) => self.process_common_key_action(action),
+                    | KeyAction::ShortcutReleased(_)
+                    | KeyAction::ShortcutTap(_) => self.process_common_key_action(action),
 
                     _ => unreachable!(),
                 },
@@ -1747,6 +1762,15 @@ pub(crate) enum KeyAction {
     /// Fires `ironland_shortcut_v1.released` for the named shortcut - the
     /// release half of [`KeyAction::Shortcut`].
     ShortcutReleased(String),
+    /// Fires both `ironland_shortcut_v1.pressed` and `.released` for the
+    /// named shortcut back to back. Used for a bare Super-tap binding (see
+    /// `keybindings::super_tap_action`): the physical Super key press is
+    /// forwarded to the focused client rather than intercepted, so by the
+    /// time a completed tap is recognized (on release) there's no second,
+    /// separate physical event left to produce the release half - unlike
+    /// [`KeyAction::Shortcut`]/[`KeyAction::ShortcutReleased`], which pair up
+    /// across a real key-down and key-up.
+    ShortcutTap(String),
     /// Do nothing more
     None,
 }
