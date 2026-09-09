@@ -224,7 +224,11 @@ fn finish_tiling_drag<BackendData: Backend>(
     let target = crate::shell::tiling::drop_target(data, &output, pointer_loc).map(|(w, dir, _)| (w, dir));
 
     crate::shell::tiling::tile_dropped_window(data, window, &output, target);
-    crate::shell::tiling::raise_and_focus(data, window);
+    // Not `raise_and_focus`: this runs inside the grab's `unset()`, itself
+    // called from within the pointer's own button/motion dispatch (which
+    // holds the pointer's internal lock) - warping the pointer here would
+    // re-enter that lock and deadlock. See `raise_and_focus_no_warp`'s doc.
+    crate::shell::tiling::raise_and_focus_no_warp(data, window);
 }
 
 impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>> for TouchMoveSurfaceGrab<BackendData> {

@@ -551,12 +551,25 @@ fn center_on_output<BackendData: Backend>(
 }
 
 pub(crate) fn raise_and_focus<BackendData: Backend>(state: &mut AnvilState<BackendData>, window: &WindowElement) {
+    raise_and_focus_impl(state, window);
+    warp_pointer_to(state, window);
+}
+
+/// Like [`raise_and_focus`], but without the `mouse_follows_focus` pointer
+/// warp - for callers that are themselves handling a pointer event (a drag
+/// grab's `unset()`), where warping would re-enter the pointer's own
+/// motion/frame dispatch and deadlock on its internal lock. See
+/// [`warp_pointer_to`]'s doc for the invariant this preserves.
+pub(crate) fn raise_and_focus_no_warp<BackendData: Backend>(state: &mut AnvilState<BackendData>, window: &WindowElement) {
+    raise_and_focus_impl(state, window);
+}
+
+fn raise_and_focus_impl<BackendData: Backend>(state: &mut AnvilState<BackendData>, window: &WindowElement) {
     state.space.raise_element(window, true);
     if let Some(keyboard) = state.seat.get_keyboard() {
         let serial = SERIAL_COUNTER.next_serial();
         keyboard.set_focus(state, Some(window.clone().into()), serial);
     }
-    warp_pointer_to(state, window);
 }
 
 /// Moves the pointer to the center of `window`, if `focus.mouse_follows_focus`
@@ -565,7 +578,11 @@ pub(crate) fn raise_and_focus<BackendData: Backend>(state: &mut AnvilState<Backe
 /// windows, a newly mapped window taking focus, activating a window from the
 /// dock) - `focus.follows_mouse` only ever runs from real pointer-motion
 /// input events (see `input_handler.rs`), so the two settings can't end up
-/// fighting each other through this.
+/// fighting each other through this. This also isn't just a style
+/// preference: `pointer.motion()`/`pointer.frame()` below re-enter the
+/// pointer's own (non-reentrant) internal lock, so calling this from code
+/// that's itself running inside that lock - e.g. a drag grab's `unset()` -
+/// deadlocks. Such callers must use [`raise_and_focus_no_warp`] instead.
 fn warp_pointer_to<BackendData: Backend>(state: &mut AnvilState<BackendData>, window: &WindowElement) {
     if !state.config.focus.mouse_follows_focus {
         return;
