@@ -530,6 +530,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 }
 
                 let grab = TouchMoveSurfaceGrab {
+                    last_location: start_data.location,
                     start_data,
                     window,
                     initial_window_location,
@@ -604,6 +605,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         }
 
         let grab = PointerMoveSurfaceGrab {
+            last_location: start_data.location,
             start_data,
             window,
             initial_window_location,

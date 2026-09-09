@@ -33,6 +33,13 @@ pub struct PointerMoveSurfaceGrab<BackendData: Backend + 'static> {
     /// so, the drag tracks a live drop target/indicator and snaps the window
     /// back into the tiling grid on release instead of leaving it floating.
     pub was_tiled: bool,
+    /// The pointer location as of the last `motion` event, used by `unset()`
+    /// to find the drop target. `unset()` only gets `data`, not the
+    /// `PointerInnerHandle` - and `data.pointer.current_location()` would
+    /// re-lock the pointer's own mutex, which `unset()` (running inside the
+    /// button/motion dispatch that's already holding it) would deadlock on.
+    /// See `finish_tiling_drag`.
+    pub last_location: Point<f64, Logical>,
 }
 
 impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>> for PointerMoveSurfaceGrab<BackendData> {
@@ -45,6 +52,8 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>> for PointerMoveS
     ) {
         // While the grab is active, no client has pointer focus
         handle.motion(data, None, event);
+
+        self.last_location = event.location;
 
         let delta = event.location - self.start_data.location;
         let new_location = self.initial_window_location.to_f64() + delta;
@@ -180,7 +189,7 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>> for PointerMoveS
     }
 
     fn unset(&mut self, data: &mut AnvilState<BackendData>) {
-        finish_tiling_drag(data, self.was_tiled, &self.window);
+        finish_tiling_drag(data, self.was_tiled, &self.window, self.last_location);
     }
 }
 
@@ -190,6 +199,8 @@ pub struct TouchMoveSurfaceGrab<BackendData: Backend + 'static> {
     pub initial_window_location: Point<i32, Logical>,
     /// See [`PointerMoveSurfaceGrab::was_tiled`].
     pub was_tiled: bool,
+    /// See [`PointerMoveSurfaceGrab::last_location`].
+    pub last_location: Point<f64, Logical>,
 }
 
 /// Shared by both move grabs' `unset()`: if the dragged window was tiled
@@ -202,6 +213,7 @@ fn finish_tiling_drag<BackendData: Backend>(
     data: &mut AnvilState<BackendData>,
     was_tiled: bool,
     window: &WindowElement,
+    pointer_loc: Point<f64, Logical>,
 ) {
     if !was_tiled {
         return;
@@ -211,7 +223,6 @@ fn finish_tiling_drag<BackendData: Backend>(
         return;
     }
 
-    let pointer_loc = data.pointer.current_location();
     let output = data
         .space
         .output_under(pointer_loc)
@@ -272,6 +283,8 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>> for TouchMoveSurfa
             return;
         }
 
+        self.last_location = event.location;
+
         let delta = event.location - self.start_data.location;
         let new_location = self.initial_window_location.to_f64() + delta;
         data.space
@@ -327,7 +340,7 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>> for TouchMoveSurfa
     }
 
     fn unset(&mut self, data: &mut AnvilState<BackendData>) {
-        finish_tiling_drag(data, self.was_tiled, &self.window);
+        finish_tiling_drag(data, self.was_tiled, &self.window, self.last_location);
     }
 }
 
