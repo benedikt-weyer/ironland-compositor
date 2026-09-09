@@ -49,6 +49,28 @@ pub fn announce_session_start(socket_name: Option<&str>) {
     });
 }
 
+/// Exports `DISPLAY` to `systemd --user` and D-Bus once XWayland is up.
+/// Without this, `DISPLAY` never reaches units/services that were started
+/// (or long-running processes that were spawned) before XWayland came up
+/// with its env captured at that time -- notably the shell itself, whose
+/// own app launcher then fails to start any XWayland-dependent app because
+/// the spawned process inherits an environment with no `DISPLAY` in it.
+pub fn announce_xwayland_ready(display_number: u32) {
+    let display = format!(":{display_number}");
+    // Safety: called from the main thread's Xwayland-ready event handler,
+    // same single-threaded-at-startup reasoning as `announce_session_start`.
+    unsafe {
+        std::env::set_var("DISPLAY", &display);
+    }
+
+    run("systemctl", |cmd| {
+        cmd.arg("--user").arg("import-environment").arg("DISPLAY");
+    });
+    run("dbus-update-activation-environment", |cmd| {
+        cmd.arg("--systemd").arg("DISPLAY");
+    });
+}
+
 /// Tears the session back down, stopping session services that were
 /// waiting on `graphical-session.target`. Call this on compositor exit.
 pub fn announce_session_end() {

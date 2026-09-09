@@ -1143,6 +1143,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
                     .expect("Failed to set xwayland default cursor");
                     data.xwm = Some(wm);
                     data.xdisplay = Some(display_number);
+                    crate::session::announce_xwayland_ready(display_number);
                 }
                 XWaylandEvent::Error => {
                     warn!("XWayland crashed on startup");
