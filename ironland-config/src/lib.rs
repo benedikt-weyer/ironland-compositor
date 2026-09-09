@@ -86,6 +86,15 @@ pub enum WorkspaceMode {
     Combined,
 }
 
+/// Axis windows slide along during an animated workspace switch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceTransitionAxis {
+    #[default]
+    Horizontal,
+    Vertical,
+}
+
 /// Workspace settings: how many virtual desktops exist, whether outputs
 /// share them or each gets their own, and whether the on-screen dot
 /// indicator (shown briefly on switch) is enabled.
@@ -107,6 +116,8 @@ pub struct WorkspaceSettings {
     /// switch, in milliseconds. `0` disables the animation - the switch is
     /// instant, as it was before this setting existed.
     pub transition_ms: u32,
+    /// Axis the slide animation moves along.
+    pub transition_axis: WorkspaceTransitionAxis,
 }
 
 impl Default for WorkspaceSettings {
@@ -117,6 +128,7 @@ impl Default for WorkspaceSettings {
             dynamic: false,
             overlay: true,
             transition_ms: 220,
+            transition_axis: WorkspaceTransitionAxis::default(),
         }
     }
 }
@@ -793,6 +805,15 @@ mod tests {
         assert_eq!(raw.workspaces.count, 6);
         assert!(raw.workspaces.dynamic);
         assert!(!raw.workspaces.overlay);
+    }
+
+    #[test]
+    fn workspace_transition_axis_defaults_to_horizontal_and_parses() {
+        let raw: RawConfig = toml::from_str("").unwrap();
+        assert_eq!(raw.workspaces.transition_axis, WorkspaceTransitionAxis::Horizontal);
+
+        let raw: RawConfig = toml::from_str("[workspaces]\ntransition_axis = \"vertical\"\n").unwrap();
+        assert_eq!(raw.workspaces.transition_axis, WorkspaceTransitionAxis::Vertical);
     }
 
     #[test]

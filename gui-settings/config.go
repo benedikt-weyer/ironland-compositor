@@ -84,6 +84,9 @@ type WorkspaceSettings struct {
 	// TransitionMs is how long windows take to slide to/from the next
 	// workspace on a switch, in milliseconds. 0 disables the animation.
 	TransitionMs int `json:"transition_ms"`
+	// TransitionAxis is either "horizontal" (windows slide left/right) or
+	// "vertical" (windows slide up/down).
+	TransitionAxis string `json:"transition_axis"`
 }
 
 // FocusSettings mirrors `ironland_config::FocusSettings`: both default off,

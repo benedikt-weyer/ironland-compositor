@@ -32,7 +32,7 @@ use smithay::{
 };
 
 use crate::{
-    config::{Config, WorkspaceMode},
+    config::{Config, WorkspaceMode, WorkspaceTransitionAxis},
     state::{AnvilState, Backend},
 };
 
@@ -414,19 +414,24 @@ fn restore_fullscreen<B: Backend>(state: &mut AnvilState<B>, output: &Output, wi
     crate::workspace_windows::sync(state);
 }
 
-/// An in-flight slide animation for a workspace switch on one output.
-/// Outgoing windows stay mapped and slide toward `dir`; incoming windows
-/// (already mapped off-screen by [`start_transition`]) slide in from the
-/// opposite edge. Only positions animate - sizes are fixed once, by the same
-/// [`tiling::apply_layout`] call [`show_workspace`] would otherwise have
-/// made.
+/// An in-flight slide animation for a workspace switch on one output, like a
+/// filmstrip: outgoing windows stay mapped and slide away toward `-dir`,
+/// while incoming windows (already mapped off-screen by [`start_transition`],
+/// at `dir` distance away) slide the same distance in the same direction to
+/// reach their resting position. Only positions animate - sizes are fixed
+/// once, by the same [`tiling::apply_layout`] call [`show_workspace`] would
+/// otherwise have made.
 struct WorkspaceTransition {
     start: Instant,
     duration: Duration,
-    /// `1` if `new_idx > old_idx` (incoming slides in from the right, i.e.
-    /// positive x), `-1` otherwise.
+    /// `1` if `new_idx > old_idx` (incoming slides in from the trailing
+    /// edge - the right on the horizontal axis, the bottom on the vertical
+    /// one), `-1` otherwise.
     dir: i32,
-    /// Slide distance in logical pixels - `output`'s width.
+    /// Axis the slide moves along.
+    axis: WorkspaceTransitionAxis,
+    /// Slide distance in logical pixels - `output`'s width (horizontal axis)
+    /// or height (vertical axis).
     distance: i32,
     /// Each window's resting position before the switch, which it animates
     /// away from.
@@ -480,7 +485,11 @@ fn start_transition<B: Backend>(
         return false;
     }
 
-    let Some(distance) = state.space.output_geometry(output).map(|g| g.size.w) else {
+    let axis = state.config.workspaces.transition_axis;
+    let Some(distance) = state.space.output_geometry(output).map(|g| match axis {
+        WorkspaceTransitionAxis::Horizontal => g.size.w,
+        WorkspaceTransitionAxis::Vertical => g.size.h,
+    }) else {
         return false;
     };
     if distance == 0 {
@@ -519,7 +528,10 @@ fn start_transition<B: Backend>(
     }
 
     let dir: i32 = if new_idx > old_idx { 1 } else { -1 };
-    let offscreen = Point::from((dir * distance, 0));
+    let offscreen = match axis {
+        WorkspaceTransitionAxis::Horizontal => Point::from((dir * distance, 0)),
+        WorkspaceTransitionAxis::Vertical => Point::from((0, dir * distance)),
+    };
     for (window, target) in &incoming {
         state.space.map_element(window.clone(), *target + offscreen, false);
     }
@@ -528,6 +540,7 @@ fn start_transition<B: Backend>(
         start: Instant::now(),
         duration: Duration::from_millis(duration_ms as u64),
         dir,
+        axis,
         distance,
         outgoing,
         incoming,
@@ -545,6 +558,7 @@ pub(crate) fn advance_transitions<B: Backend>(state: &mut AnvilState<B>, output:
         elapsed: Duration,
         duration: Duration,
         dir: i32,
+        axis: WorkspaceTransitionAxis,
         distance: i32,
         outgoing: Vec<(WindowElement, Point<i32, Logical>)>,
         incoming: Vec<(WindowElement, Point<i32, Logical>)>,
@@ -556,6 +570,7 @@ pub(crate) fn advance_transitions<B: Backend>(state: &mut AnvilState<B>, output:
             elapsed: t.start.elapsed(),
             duration: t.duration,
             dir: t.dir,
+            axis: t.axis,
             distance: t.distance,
             outgoing: t.outgoing.clone(),
             incoming: t.incoming.clone(),
@@ -572,21 +587,29 @@ pub(crate) fn advance_transitions<B: Backend>(state: &mut AnvilState<B>, output:
 
     let progress = snapshot.elapsed.as_secs_f32() / snapshot.duration.as_secs_f32();
     let eased = ease_out_cubic(progress.clamp(0.0, 1.0));
-    let outgoing_shift = (snapshot.dir as f32 * snapshot.distance as f32 * eased).round() as i32;
+    // Outgoing and incoming slide the same way, like a filmstrip: incoming
+    // starts off-screen at `dir * distance` (see `start_transition`) and
+    // slides down to its resting position, while outgoing slides the same
+    // distance in the same direction (`-dir`) away from its resting one.
+    let outgoing_shift = (-snapshot.dir as f32 * snapshot.distance as f32 * eased).round() as i32;
     let incoming_shift = (snapshot.dir as f32 * snapshot.distance as f32 * (1.0 - eased)).round() as i32;
+    let axis_point = |shift: i32| match snapshot.axis {
+        WorkspaceTransitionAxis::Horizontal => Point::from((shift, 0)),
+        WorkspaceTransitionAxis::Vertical => Point::from((0, shift)),
+    };
 
     for (window, home) in &snapshot.outgoing {
         if window.alive() {
             state
                 .space
-                .map_element(window.clone(), *home + Point::from((outgoing_shift, 0)), false);
+                .map_element(window.clone(), *home + axis_point(outgoing_shift), false);
         }
     }
     for (window, target) in &snapshot.incoming {
         if window.alive() {
             state
                 .space
-                .map_element(window.clone(), *target + Point::from((incoming_shift, 0)), false);
+                .map_element(window.clone(), *target + axis_point(incoming_shift), false);
         }
     }
 }

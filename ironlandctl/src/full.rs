@@ -3,7 +3,7 @@
 //! "Save" - which always has a complete, fully-merged config in hand rather
 //! than one changed field.
 
-use ironland_config::{FullConfig, OutputPosition, WorkspaceMode};
+use ironland_config::{FullConfig, OutputPosition, WorkspaceMode, WorkspaceTransitionAxis};
 use toml_edit::{Array, DocumentMut, Item, Table, value};
 
 fn ensure_table<'a>(doc: &'a mut DocumentMut, key: &str) -> &'a mut Table {
@@ -89,6 +89,11 @@ pub fn write(doc: &mut DocumentMut, full: &FullConfig) {
     workspaces["count"] = value(cfg.workspaces.count as i64);
     workspaces["dynamic"] = value(cfg.workspaces.dynamic);
     workspaces["overlay"] = value(cfg.workspaces.overlay);
+    workspaces["transition_ms"] = value(cfg.workspaces.transition_ms as i64);
+    workspaces["transition_axis"] = value(match cfg.workspaces.transition_axis {
+        WorkspaceTransitionAxis::Horizontal => "horizontal",
+        WorkspaceTransitionAxis::Vertical => "vertical",
+    });
 
     let mut shortcuts = Table::new();
     let mut action_names: Vec<&String> = cfg.shortcuts.keys().collect();

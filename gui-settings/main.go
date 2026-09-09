@@ -636,12 +636,30 @@ func buildWorkspacesTab(cfg *Config) fyne.CanvasObject {
 		resets.refresh()
 	}
 
+	axisLabels := map[string]string{
+		"horizontal": "Horizontal (slide left/right)",
+		"vertical":   "Vertical (slide up/down)",
+	}
+	transitionAxis := widget.NewSelect(
+		[]string{axisLabels["horizontal"], axisLabels["vertical"]},
+		func(selected string) {
+			if selected == axisLabels["vertical"] {
+				cfg.Workspaces.TransitionAxis = "vertical"
+			} else {
+				cfg.Workspaces.TransitionAxis = "horizontal"
+			}
+			resets.refresh()
+		},
+	)
+	transitionAxis.SetSelected(axisLabels[cfg.Workspaces.TransitionAxis])
+
 	form := widget.NewForm(
 		widget.NewFormItem("Layout", resets.item(modeSelect, func() bool { return cfg.Workspaces.Mode != defaults.Mode }, func() { modeSelect.SetSelected(modeLabels[defaults.Mode]) })),
 		widget.NewFormItem("Starting workspace count", resets.item(count, func() bool { return cfg.Workspaces.Count != defaults.Count }, func() { count.SetText(fmt.Sprintf("%d", defaults.Count)) })),
 		widget.NewFormItem("Dynamic count", resets.item(dynamic, func() bool { return cfg.Workspaces.Dynamic != defaults.Dynamic }, func() { dynamic.SetChecked(defaults.Dynamic) })),
 		widget.NewFormItem("On-screen overlay", resets.item(overlay, func() bool { return cfg.Workspaces.Overlay != defaults.Overlay }, func() { overlay.SetChecked(defaults.Overlay) })),
 		widget.NewFormItem("Switch animation (ms, 0 = off)", resets.item(transitionMs, func() bool { return cfg.Workspaces.TransitionMs != defaults.TransitionMs }, func() { transitionMs.SetText(fmt.Sprintf("%d", defaults.TransitionMs)) })),
+		widget.NewFormItem("Switch animation direction", resets.item(transitionAxis, func() bool { return cfg.Workspaces.TransitionAxis != defaults.TransitionAxis }, func() { transitionAxis.SetSelected(axisLabels[defaults.TransitionAxis]) })),
 	)
 
 	hint := widget.NewLabel(
