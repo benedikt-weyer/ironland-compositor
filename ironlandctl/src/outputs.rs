@@ -302,21 +302,22 @@ fn parse_wayland_info(data: &str) -> Vec<DetectedOutput> {
         let trimmed = line.trim_start();
         if let Some(rest) = trimmed.strip_prefix("interface: '") {
             finish(&mut current, &mut modes, &mut outputs);
-            if let Some(name) = rest.strip_suffix("'")
-                && name.starts_with("wl_output") {
-                    current = Some(DetectedOutput {
-                        name: String::new(),
-                        make: String::new(),
-                        model: String::new(),
-                        x: 0,
-                        y: 0,
-                        width: 0,
-                        height: 0,
-                        scale: 1,
-                        current_refresh: 0,
-                        refresh_rates: Vec::new(),
-                    });
-                }
+            if let Some(end) = rest.find('\'')
+                && rest[..end].starts_with("wl_output")
+            {
+                current = Some(DetectedOutput {
+                    name: String::new(),
+                    make: String::new(),
+                    model: String::new(),
+                    x: 0,
+                    y: 0,
+                    width: 0,
+                    height: 0,
+                    scale: 1,
+                    current_refresh: 0,
+                    refresh_rates: Vec::new(),
+                });
+            }
             continue;
         }
         let Some(out) = current.as_mut() else { continue };
@@ -326,18 +327,22 @@ fn parse_wayland_info(data: &str) -> Vec<DetectedOutput> {
                 && let Some((y, rest)) = rest.split_once(", scale: ") {
                     out.x = x.trim().parse().unwrap_or(0);
                     out.y = y.trim().parse().unwrap_or(0);
-                    out.scale = rest.trim().parse().unwrap_or(1);
+                    out.scale = rest.trim().trim_end_matches(',').parse().unwrap_or(1);
                 }
         } else if let Some(rest) = trimmed.strip_prefix("make: '") {
             if let Some((make, rest)) = rest.split_once("', model: '") {
                 out.make = make.to_string();
-                out.model = rest.trim_end_matches('\'').to_string();
+                out.model = match rest.find('\'') {
+                    Some(end) => rest[..end].to_string(),
+                    None => rest.trim_end_matches(',').to_string(),
+                };
             }
         } else if line.starts_with(char::is_whitespace)
-            && let Some(rest) = trimmed.strip_prefix("name: '")
-                && let Some(name) = rest.strip_suffix("'") {
-                    out.name = name.to_string();
-                }
+            && !line.starts_with("\t\t")
+            && let Some(rest) = trimmed.strip_prefix("name: ")
+        {
+            out.name = rest.trim().trim_matches('\'').to_string();
+        }
         if let Some(rest) = trimmed.strip_prefix("width: ") {
             if let Some((width, rest)) = rest.split_once(" px, height: ")
                 && let Some((height, rest)) = rest.split_once(" px, refresh: ")
