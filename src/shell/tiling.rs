@@ -122,6 +122,54 @@ impl TilingLayout {
         self.root = Some(new_root);
     }
 
+    /// Insert `window` as `target`'s new sibling, splitting `target`'s tile
+    /// so `window` takes the half `direction` points to (`Left`/`Up` put it
+    /// first, `Right`/`Down` second). Falls back to the generic [`insert`]
+    /// heuristic if `target` isn't tiled here any more (e.g. closed
+    /// mid-drag) - used to land a window dragged onto another one, with
+    /// `direction` picked from where in `target`'s tile it was dropped.
+    ///
+    /// [`insert`]: Self::insert
+    pub fn insert_beside(
+        &mut self,
+        window: WindowElement,
+        area: Rectangle<i32, Logical>,
+        target: &WindowElement,
+        direction: Direction,
+    ) {
+        let Some(root) = self.root.take() else {
+            self.root = Some(Node::Leaf(window.clone()));
+            self.last = Some(window);
+            return;
+        };
+        if !Self::tree_contains(&root, target) {
+            self.root = Some(root);
+            self.insert(window, area, None);
+            return;
+        }
+
+        self.last = Some(window.clone());
+        let vertical = matches!(direction, Direction::Left | Direction::Right);
+        let window_first = matches!(direction, Direction::Left | Direction::Up);
+        let new_leaf = Node::Leaf(window);
+        let target_leaf = Node::Leaf(target.clone());
+        let (a, b) = if window_first {
+            (new_leaf, target_leaf)
+        } else {
+            (target_leaf, new_leaf)
+        };
+        self.root = Some(Self::replace_leaf(
+            root,
+            target,
+            Node::Split {
+                vertical,
+                ratio: 0.5,
+                a: Box::new(a),
+                b: Box::new(b),
+            },
+        ));
+    }
+
     fn tree_contains(node: &Node, window: &WindowElement) -> bool {
         match node {
             Node::Leaf(w) => w == window,
@@ -653,6 +701,93 @@ pub fn toggle_floating<BackendData: Backend>(state: &mut AnvilState<BackendData>
     tile_new_window(state, window, state.pointer.current_location());
 }
 
+/// Which side of `rect` is closest to `point`, for [`drop_target`]'s
+/// direction heuristic - the edge `point` has traveled furthest toward, as a
+/// fraction of that edge's own dimension (not absolute logical pixels), so
+/// it's just as sensitive on a tiny sliver of a tile as on a huge one.
+fn edge_direction(rect: Rectangle<i32, Logical>, point: Point<f64, Logical>) -> Direction {
+    let rel_x = ((point.x - rect.loc.x as f64) / rect.size.w.max(1) as f64).clamp(0.0, 1.0);
+    let rel_y = ((point.y - rect.loc.y as f64) / rect.size.h.max(1) as f64).clamp(0.0, 1.0);
+    [
+        (rel_x, Direction::Left),
+        (1.0 - rel_x, Direction::Right),
+        (rel_y, Direction::Up),
+        (1.0 - rel_y, Direction::Down),
+    ]
+    .into_iter()
+    .min_by(|(a, _), (b, _)| a.total_cmp(b))
+    .map(|(_, dir)| dir)
+    .expect("non-empty")
+}
+
+/// The half of `rect` that [`TilingLayout::insert_beside`] would give a
+/// window dropped toward `direction`.
+fn half_rect(rect: Rectangle<i32, Logical>, direction: Direction) -> Rectangle<i32, Logical> {
+    let half_w = rect.size.w / 2;
+    let half_h = rect.size.h / 2;
+    match direction {
+        Direction::Left => Rectangle::new(rect.loc, (half_w, rect.size.h).into()),
+        Direction::Right => Rectangle::new(
+            Point::from((rect.loc.x + half_w, rect.loc.y)),
+            (rect.size.w - half_w, rect.size.h).into(),
+        ),
+        Direction::Up => Rectangle::new(rect.loc, (rect.size.w, half_h).into()),
+        Direction::Down => Rectangle::new(
+            Point::from((rect.loc.x, rect.loc.y + half_h)),
+            (rect.size.w, rect.size.h - half_h).into(),
+        ),
+    }
+}
+
+/// The tiled window a drag currently hovering `pointer` (on `output`'s
+/// active workspace) would land beside if dropped now, which side of it,
+/// and the rect a drop indicator should highlight to preview that. `None`
+/// if `pointer` isn't over any tile (a gap, an empty output, or a
+/// fullscreen/single-window workspace's own edges are still "over" that one
+/// tile, so this is only `None` when there's nothing tiled there at all).
+pub(crate) fn drop_target<BackendData: Backend>(
+    state: &AnvilState<BackendData>,
+    output: &Output,
+    pointer: Point<f64, Logical>,
+) -> Option<(WindowElement, Direction, Rectangle<i32, Logical>)> {
+    let idx = WorkspaceState::get(output).active();
+    let area = tiling_area(&state.space, output, state.config.gaps.outer as i32);
+    let rects = TilingState::tree(output, idx).layout(area, state.config.gaps.inner as i32);
+    let point = pointer.to_i32_round();
+    let (window, rect) = rects.into_iter().find(|(_, r)| r.contains(point))?;
+    let direction = edge_direction(rect, pointer);
+    let indicator = half_rect(rect, direction);
+    Some((window, direction, indicator))
+}
+
+/// Finishes a tiling drag-and-drop: re-tiles `window` (already pulled out of
+/// the tree by [`untile_window`] when the drag grab started, and still
+/// registered floating from that) into `output`'s active workspace, beside
+/// `target` on the given side - or via the ordinary [`TilingLayout::insert`]
+/// heuristic if there was no drop target (dropped over empty space) or it
+/// died mid-drag.
+pub(crate) fn tile_dropped_window<BackendData: Backend>(
+    state: &mut AnvilState<BackendData>,
+    window: &WindowElement,
+    output: &Output,
+    target: Option<(WindowElement, Direction)>,
+) {
+    crate::shell::workspace::unregister_floating(window);
+    let idx = WorkspaceState::get(output).active();
+    let area = tiling_area(&state.space, output, state.config.gaps.outer as i32);
+    {
+        let mut tree = TilingState::tree_mut(output, idx);
+        match target {
+            Some((target_window, direction)) if tree.contains(&target_window) => {
+                tree.insert_beside(window.clone(), area, &target_window, direction);
+            }
+            _ => tree.insert(window.clone(), area, None),
+        }
+    }
+    crate::shell::workspace::assign_new_window(window, output, false);
+    apply_layout(state, output);
+}
+
 /// Re-flow every output's tiling tree, e.g. after output geometry changed
 /// (scale, rotation, added/removed monitors).
 pub fn retile_all_outputs<BackendData: Backend>(state: &mut AnvilState<BackendData>) {
@@ -864,4 +999,54 @@ fn nearest_neighbor(
             dx * dx + dy * dy
         })
         .map(|(w, _)| w.clone())
+}
+
+#[cfg(test)]
+mod drop_indicator_tests {
+    use super::{Direction, edge_direction, half_rect};
+    use smithay::utils::{Point, Rectangle};
+
+    fn rect() -> Rectangle<i32, smithay::utils::Logical> {
+        Rectangle::new(Point::from((100, 200)), (300, 400).into())
+    }
+
+    #[test]
+    fn edge_direction_picks_the_nearest_edge() {
+        let r = rect();
+        // Near the left edge, away from top/bottom.
+        assert_eq!(edge_direction(r, Point::from((110.0, 400.0))), Direction::Left);
+        // Near the right edge.
+        assert_eq!(edge_direction(r, Point::from((390.0, 400.0))), Direction::Right);
+        // Near the top edge.
+        assert_eq!(edge_direction(r, Point::from((250.0, 210.0))), Direction::Up);
+        // Near the bottom edge.
+        assert_eq!(edge_direction(r, Point::from((250.0, 590.0))), Direction::Down);
+    }
+
+    #[test]
+    fn edge_direction_clamps_points_outside_the_rect() {
+        // Comfortably left of the rect entirely - still reads as "left".
+        assert_eq!(edge_direction(rect(), Point::from((-500.0, 400.0))), Direction::Left);
+    }
+
+    #[test]
+    fn half_rect_splits_evenly_and_covers_the_source_rect() {
+        let r = rect();
+        for dir in [Direction::Left, Direction::Right, Direction::Up, Direction::Down] {
+            let half = half_rect(r, dir);
+            assert!(r.contains_rect(half));
+        }
+
+        let left = half_rect(r, Direction::Left);
+        let right = half_rect(r, Direction::Right);
+        assert_eq!(left.size.w + right.size.w, r.size.w);
+        assert_eq!(left.loc.x, r.loc.x);
+        assert_eq!(right.loc.x + right.size.w, r.loc.x + r.size.w);
+
+        let up = half_rect(r, Direction::Up);
+        let down = half_rect(r, Direction::Down);
+        assert_eq!(up.size.h + down.size.h, r.size.h);
+        assert_eq!(up.loc.y, r.loc.y);
+        assert_eq!(down.loc.y + down.size.h, r.loc.y + r.size.h);
+    }
 }

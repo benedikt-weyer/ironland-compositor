@@ -235,6 +235,18 @@ pub fn mark_floating<B: Backend>(
     }
 }
 
+/// Removes `window`'s registration from whichever floating slot [`mark_floating`]
+/// last put it in, without otherwise touching its tiled/floating status -
+/// used when a tiling drag-and-drop re-tiles a window that briefly went
+/// through [`mark_floating`] when the drag grab started.
+pub(crate) fn unregister_floating(window: &WindowElement) {
+    let home = WindowHome::get(window);
+    if let Some(output) = home.output.borrow().clone() {
+        let idx = *home.index.borrow();
+        WorkspaceState::get(&output).floating_slot(idx).retain(|w| w != window);
+    }
+}
+
 /// Drops dead windows from every output's floating registry. Tiled windows
 /// are cleaned up by [`tiling::cleanup_dead`] (which calls this too).
 /// Returns whether any window was removed.

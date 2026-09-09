@@ -268,6 +268,7 @@ pub fn run_winit() {
 
             let focused_window_rect = crate::shell::tiling::current_focused_window(&state)
                 .and_then(|w| state.space.element_bbox(&w));
+            let drop_indicator = state.tiling_drop_indicator;
             let border = state.config.border.clone();
             let corner_radius = if state.config.corners.enabled {
                 state.config.corners.radius as f32
@@ -483,6 +484,7 @@ pub fn run_winit() {
                     focused_window_rect,
                     &border,
                     corner_radius,
+                    drop_indicator,
                 )
                 .map_err(|err| match err {
                     OutputDamageTrackerError::Rendering(err) => err.into(),

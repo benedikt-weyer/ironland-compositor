@@ -410,6 +410,9 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                         start_data,
                         window: element.clone(),
                         initial_window_location,
+                        // X11 windows are always floating, never tiled (see
+                        // the module doc), so there's nothing to snap back.
+                        was_tiled: false,
                     };
 
                     touch.set_grab(self, grab, SERIAL_COUNTER.next_serial());
@@ -453,6 +456,9 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             start_data,
             window: element.clone(),
             initial_window_location,
+            // X11 windows are always floating, never tiled (see the module
+            // doc), so there's nothing to snap back.
+            was_tiled: false,
         };
 
         let pointer = self.pointer.clone();

@@ -495,8 +495,11 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     return;
                 }
 
-                // Dragging a tiled window pulls it out into floating, like Hyprland.
-                tiling::untile_window(self, &window);
+                // Dragging a tiled window pulls it out of the tree for the
+                // duration of the drag; `was_tiled` has the grab snap it
+                // back into the tiling grid on drop instead of leaving it
+                // floating (see `TouchMoveSurfaceGrab::unset`).
+                let was_tiled = tiling::untile_window(self, &window);
 
                 let mut initial_window_location = self.space.element_location(&window).unwrap();
 
@@ -530,6 +533,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     start_data,
                     window,
                     initial_window_location,
+                    was_tiled,
                 };
 
                 touch.set_grab(self, grab, serial);
@@ -564,8 +568,11 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             return;
         }
 
-        // Dragging a tiled window pulls it out into floating, like Hyprland.
-        tiling::untile_window(self, &window);
+        // Dragging a tiled window pulls it out of the tree for the duration
+        // of the drag; `was_tiled` has the grab snap it back into the tiling
+        // grid on drop instead of leaving it floating (see
+        // `PointerMoveSurfaceGrab::unset`).
+        let was_tiled = tiling::untile_window(self, &window);
 
         let mut initial_window_location = self.space.element_location(&window).unwrap();
 
@@ -600,6 +607,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             start_data,
             window,
             initial_window_location,
+            was_tiled,
         };
 
         pointer.set_grab(self, grab, serial, Focus::Clear);

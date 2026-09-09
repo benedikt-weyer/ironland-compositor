@@ -1719,6 +1719,7 @@ impl AnvilState<UdevData> {
 
         let focused_window_rect = crate::shell::tiling::current_focused_window(self)
             .and_then(|w| self.space.element_bbox(&w));
+        let drop_indicator = self.tiling_drop_indicator;
 
         let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
             device
@@ -1800,6 +1801,7 @@ impl AnvilState<UdevData> {
             &self.config.corners,
             focused_window_rect,
             &self.config.border,
+            drop_indicator,
         );
         let reschedule = match result {
             Ok((has_rendered, states)) => {
@@ -1890,6 +1892,7 @@ fn render_surface<'a>(
     corners: &crate::config::CornersSettings,
     focused_window_rect: Option<Rectangle<i32, Logical>>,
     border: &crate::config::BorderSettings,
+    drop_indicator: Option<Rectangle<i32, Logical>>,
 ) -> Result<(bool, RenderElementStates), SwapBuffersError> {
     let output_geometry = space.output_geometry(output).unwrap();
     let scale = Scale::from(output.current_scale().fractional_scale());
@@ -2045,6 +2048,7 @@ fn render_surface<'a>(
         focused_window_rect,
         border,
         corner_radius,
+        drop_indicator,
     );
 
     let frame_mode = if surface.disable_direct_scanout {

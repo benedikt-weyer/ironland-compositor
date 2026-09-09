@@ -219,6 +219,13 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     /// [`crate::shell::workspace::OVERLAY_DURATION_MS`]; see the render loops.
     pub workspace_overlay_shown: Option<std::time::Instant>,
 
+    /// The drop-target rect a tiling drag-and-drop is currently previewing
+    /// (space-global logical coordinates), if a tiled window is being
+    /// dragged and the pointer is over another tile - see
+    /// `shell::tiling::drop_target` and `shell::grabs::PointerMoveSurfaceGrab`.
+    /// Drawn as a highlight border in the render loops.
+    pub tiling_drop_indicator: Option<smithay::utils::Rectangle<i32, smithay::utils::Logical>>,
+
     /// Resolved keybinding table, built once at startup from `config::Config`
     /// (see `input_handler::compile_keybindings`).
     pub(crate) keybindings: Vec<(
@@ -921,6 +928,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             launcher: crate::drawing::LauncherState::default(),
             wallpaper: crate::wallpaper::Wallpaper::load(config.wallpaper.as_deref()),
             workspace_overlay_shown: None,
+            tiling_drop_indicator: None,
             keybindings,
             super_tap_action,
             super_tap_pending: None,

@@ -32,6 +32,11 @@ use crate::{
     shell::{FullscreenSurface, WindowElement, WindowRenderElement},
 };
 
+/// Border thickness (logical pixels) of the tiling drag-and-drop indicator.
+const DROP_INDICATOR_THICKNESS: u32 = 3;
+/// Border color of the tiling drag-and-drop indicator (`#rrggbbaa`).
+const DROP_INDICATOR_COLOR: &str = "#89b4fadd";
+
 smithay::backend::renderer::element::render_elements! {
     pub CustomRenderElements<R> where
         R: ImportAll + ImportMem + GlesCapable;
@@ -155,6 +160,7 @@ where
 }
 
 #[profiling::function]
+#[allow(clippy::too_many_arguments)]
 pub fn output_elements<R>(
     output: &Output,
     space: &Space<WindowElement>,
@@ -166,6 +172,7 @@ pub fn output_elements<R>(
     focused_window_rect: Option<Rectangle<i32, Logical>>,
     border: &crate::config::BorderSettings,
     corner_radius: f32,
+    drop_indicator: Option<Rectangle<i32, Logical>>,
 ) -> (
     Vec<OutputRenderElements<R, WindowRenderElement<R>>>,
     Color32F,
@@ -212,6 +219,25 @@ where
         if let Some(mut window_rect) = focused_window_rect {
             window_rect.loc -= output_geometry.loc;
             if let Some(element) = crate::border::build(renderer, window_rect, border, corner_radius) {
+                output_render_elements.push(OutputRenderElements::from(CustomRenderElements::Border(element)));
+            }
+        }
+
+        // The tiling drag-and-drop indicator, previewing where a dragged
+        // tiled window would land if dropped now (see
+        // `shell::tiling::drop_target`). Reuses the focus-border shader with
+        // its own fixed style rather than the user's border config, since
+        // it's a transient snap-preview, not the window-highlight feature.
+        if let Some(mut indicator_rect) = drop_indicator {
+            indicator_rect.loc -= output_geometry.loc;
+            let indicator_style = crate::config::BorderSettings {
+                enabled: true,
+                thickness: DROP_INDICATOR_THICKNESS,
+                color: DROP_INDICATOR_COLOR.to_string(),
+                gradient_color: None,
+                angle: 0.0,
+            };
+            if let Some(element) = crate::border::build(renderer, indicator_rect, &indicator_style, 0.0) {
                 output_render_elements.push(OutputRenderElements::from(CustomRenderElements::Border(element)));
             }
         }
@@ -323,6 +349,7 @@ pub fn render_output<'a, 'd, R>(
     focused_window_rect: Option<Rectangle<i32, Logical>>,
     border: &crate::config::BorderSettings,
     corner_radius: f32,
+    drop_indicator: Option<Rectangle<i32, Logical>>,
 ) -> Result<RenderOutputResult<'d>, OutputDamageTrackerError<R::Error>>
 where
     R: Renderer + ImportAll + ImportMem + GlesCapable,
@@ -339,6 +366,7 @@ where
         focused_window_rect,
         border,
         corner_radius,
+        drop_indicator,
     );
     damage_tracker.render_output(renderer, framebuffer, age, &elements, clear_color)
 }

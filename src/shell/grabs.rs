@@ -28,6 +28,11 @@ pub struct PointerMoveSurfaceGrab<BackendData: Backend + 'static> {
     pub start_data: PointerGrabStartData<AnvilState<BackendData>>,
     pub window: WindowElement,
     pub initial_window_location: Point<i32, Logical>,
+    /// Whether `window` was tiled before this drag pulled it out (see
+    /// `shell::tiling::untile_window` at the grab's construction site). If
+    /// so, the drag tracks a live drop target/indicator and snaps the window
+    /// back into the tiling grid on release instead of leaving it floating.
+    pub was_tiled: bool,
 }
 
 impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>> for PointerMoveSurfaceGrab<BackendData> {
@@ -46,6 +51,16 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>> for PointerMoveS
 
         data.space
             .map_element(self.window.clone(), new_location.to_i32_round(), true);
+
+        if self.was_tiled {
+            data.tiling_drop_indicator = data
+                .space
+                .output_under(event.location)
+                .next()
+                .cloned()
+                .and_then(|output| crate::shell::tiling::drop_target(data, &output, event.location))
+                .map(|(_, _, rect)| rect);
+        }
     }
 
     fn relative_motion(
@@ -164,13 +179,52 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>> for PointerMoveS
         &self.start_data
     }
 
-    fn unset(&mut self, _data: &mut AnvilState<BackendData>) {}
+    fn unset(&mut self, data: &mut AnvilState<BackendData>) {
+        finish_tiling_drag(data, self.was_tiled, &self.window);
+    }
 }
 
 pub struct TouchMoveSurfaceGrab<BackendData: Backend + 'static> {
     pub start_data: TouchGrabStartData<AnvilState<BackendData>>,
     pub window: WindowElement,
     pub initial_window_location: Point<i32, Logical>,
+    /// See [`PointerMoveSurfaceGrab::was_tiled`].
+    pub was_tiled: bool,
+}
+
+/// Shared by both move grabs' `unset()`: if the dragged window was tiled
+/// before the drag started, snaps it back into the tiling grid - beside
+/// whatever [`crate::shell::tiling::drop_target`] last found under the
+/// pointer, or via the generic insert heuristic if the drag ended over empty
+/// space. Otherwise (a plain floating-window drag) this is a no-op; the
+/// window stays wherever `motion` left it.
+fn finish_tiling_drag<BackendData: Backend>(
+    data: &mut AnvilState<BackendData>,
+    was_tiled: bool,
+    window: &WindowElement,
+) {
+    if !was_tiled {
+        return;
+    }
+    data.tiling_drop_indicator = None;
+    if !window.alive() {
+        return;
+    }
+
+    let pointer_loc = data.pointer.current_location();
+    let output = data
+        .space
+        .output_under(pointer_loc)
+        .next()
+        .cloned()
+        .or_else(|| data.space.outputs().next().cloned());
+    let Some(output) = output else {
+        return;
+    };
+    let target = crate::shell::tiling::drop_target(data, &output, pointer_loc).map(|(w, dir, _)| (w, dir));
+
+    crate::shell::tiling::tile_dropped_window(data, window, &output, target);
+    crate::shell::tiling::raise_and_focus(data, window);
 }
 
 impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>> for TouchMoveSurfaceGrab<BackendData> {
@@ -218,6 +272,16 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>> for TouchMoveSurfa
         let new_location = self.initial_window_location.to_f64() + delta;
         data.space
             .map_element(self.window.clone(), new_location.to_i32_round(), true);
+
+        if self.was_tiled {
+            data.tiling_drop_indicator = data
+                .space
+                .output_under(event.location)
+                .next()
+                .cloned()
+                .and_then(|output| crate::shell::tiling::drop_target(data, &output, event.location))
+                .map(|(_, _, rect)| rect);
+        }
     }
 
     fn frame(
@@ -258,7 +322,9 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>> for TouchMoveSurfa
         &self.start_data
     }
 
-    fn unset(&mut self, _data: &mut AnvilState<BackendData>) {}
+    fn unset(&mut self, data: &mut AnvilState<BackendData>) {
+        finish_tiling_drag(data, self.was_tiled, &self.window);
+    }
 }
 
 bitflags::bitflags! {
