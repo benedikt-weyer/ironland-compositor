@@ -1010,6 +1010,7 @@ dependencies = [
  "ironland-config",
  "profiling",
  "rand 0.8.8",
+ "rustix 1.1.4",
  "serde",
  "serde_json",
  "smithay",

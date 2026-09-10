@@ -141,12 +141,45 @@ pub struct ClientState {
     /// unrestricted; this gate exists only so an arbitrary client can't pop
     /// a spoofed system permission dialog.
     pub capture_privileged: bool,
+    /// This client's resolved executable identity (see
+    /// `crate::screencopy::client_identity`), for the capture permission
+    /// gate. Resolved exactly once, immediately after the client connects
+    /// (see `insert_client_with_identity`) - *not* lazily on first capture
+    /// attempt, which could be arbitrarily later. `SO_PEERCRED` credentials
+    /// are frozen by the kernel at connect time and can't be spoofed, but
+    /// the pid they name can still be reused by an unrelated process once
+    /// the original one exits; resolving `/proc/<pid>/exe` from that pid
+    /// immediately - rather than whenever the client happens to first
+    /// request a capture, possibly long after connecting, well past when
+    /// the original process could have exited and that pid been recycled -
+    /// keeps that race window effectively zero.
+    pub capture_identity: std::sync::OnceLock<String>,
 }
 impl ClientData for ClientState {
     /// Notification that a client was initialized
     fn initialized(&self, _client_id: ClientId) {}
     /// Notification that a client is disconnected
     fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
+}
+
+/// Inserts a newly-connected client, then immediately resolves and caches
+/// its `capture_identity` (see [`ClientState`]'s doc on that field for why
+/// "immediately" - right after `insert_client`, not lazily - matters). The
+/// one place every client-accepting socket source in this module should
+/// call through, instead of `display_handle.insert_client` directly.
+fn insert_client_with_identity(
+    dh: &mut DisplayHandle,
+    stream: std::os::unix::net::UnixStream,
+    client_state: ClientState,
+) {
+    let client_state = Arc::new(client_state);
+    match dh.insert_client(stream, client_state.clone()) {
+        Ok(client) => {
+            let identity = crate::screencopy::client_identity(dh, &client);
+            let _ = client_state.capture_identity.set(identity);
+        }
+        Err(err) => warn!("Error adding wayland client: {}", err),
+    }
 }
 
 #[derive(Debug)]
@@ -692,12 +725,7 @@ impl<BackendData: Backend + 'static> SecurityContextHandler for AnvilState<Backe
                     security_context: Some(security_context.clone()),
                     ..ClientState::default()
                 };
-                if let Err(err) = data
-                    .display_handle
-                    .insert_client(client_stream, Arc::new(client_state))
-                {
-                    warn!("Error adding wayland client: {}", err);
-                };
+                insert_client_with_identity(&mut data.display_handle, client_stream, client_state);
             })
             .expect("Failed to init wayland socket source");
     }
@@ -777,7 +805,13 @@ impl<BackendData: Backend> ImageCopyCaptureHandler for AnvilState<BackendData> {
             frame.fail(CaptureFailureReason::Unknown);
             return;
         };
-        let subject = crate::screencopy::client_identity(&self.display_handle, &client);
+        // Cached at connect time by `insert_client_with_identity` - see
+        // `ClientState::capture_identity`'s doc for why that matters.
+        let subject = client
+            .get_data::<ClientState>()
+            .and_then(|data| data.capture_identity.get())
+            .cloned()
+            .unwrap_or_else(|| "an unidentified application".to_string());
         match self.screencopy.grant(&subject) {
             Some(true) => {}
             Some(false) => {
@@ -845,12 +879,11 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             let socket_name = source.socket_name().to_string_lossy().into_owned();
             handle
                 .insert_source(source, |client_stream, _, data| {
-                    if let Err(err) = data
-                        .display_handle
-                        .insert_client(client_stream, Arc::new(ClientState::default()))
-                    {
-                        warn!("Error adding wayland client: {}", err);
-                    };
+                    insert_client_with_identity(
+                        &mut data.display_handle,
+                        client_stream,
+                        ClientState::default(),
+                    );
                 })
                 .expect("Failed to init wayland socket source");
             info!(name = socket_name, "Listening on wayland socket");
@@ -859,15 +892,16 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             None
         };
 
-        // A second, privileged socket for screen-capture clients only (see
-        // `crate::screencopy`'s module doc): every client connected through
-        // it is flagged `capture_privileged`, the only clients the
-        // `ext-image-capture-source-v1`/`ext-image-copy-capture-v1`/
-        // `ironland-permission-prompt-v1` globals below are advertised to.
-        // In practice the sole such client is this compositor's own
-        // `ironland-portal-screenshot` binary. Opened even when
-        // `!listen_on_socket` (nested inside another session's own socket
-        // handling) so the same gating works there too during development.
+        // A second, privileged socket (see `crate::screencopy`'s module
+        // doc): every client connected through it is flagged
+        // `capture_privileged`, the only clients the
+        // `ironland-permission-prompt-v1` global is advertised to (screen
+        // capture itself is unrestricted, gated per-executable instead -
+        // see that module doc). In practice the sole client that connects
+        // here is this compositor's own `ironland-portal-screenshot`
+        // binary. Opened even when `!listen_on_socket` (nested inside
+        // another session's own socket handling) so the same gating works
+        // there too during development.
         let capture_socket_name = ListeningSocketSource::new_auto().ok().map(|source| {
             let name = source.socket_name().to_string_lossy().into_owned();
             handle
@@ -876,12 +910,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
                         capture_privileged: true,
                         ..ClientState::default()
                     };
-                    if let Err(err) = data
-                        .display_handle
-                        .insert_client(client_stream, Arc::new(client_state))
-                    {
-                        warn!("Error adding capture wayland socket client: {}", err);
-                    };
+                    insert_client_with_identity(&mut data.display_handle, client_stream, client_state);
                 })
                 .expect("Failed to init capture wayland socket source");
             info!(name = name, "Listening on privileged capture wayland socket");
@@ -1031,7 +1060,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             image_capture_source_state,
             output_capture_source_state,
             image_copy_capture_state,
-            screencopy: crate::screencopy::ScreencopyState::load(),
+            screencopy: crate::screencopy::ScreencopyState::default(),
             permission_prompt,
             capture_socket_name,
             dnd_icon: None,

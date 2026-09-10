@@ -18,10 +18,10 @@
 //! would actually read screen content
 //! ([`ImageCopyCaptureHandler::frame`][state] in `crate::state`), the
 //! requesting client is identified by [`client_identity`] - the executable
-//! path behind its Wayland connection, resolved via the kernel (`SO_
-//! PEERCRED` through [`Client::get_credentials`], then `/proc/<pid>/exe`),
-//! never anything the client itself asserts. That path is looked up in
-//! [`ScreencopyState`]'s persisted grant table:
+//! path behind its Wayland connection, resolved via the kernel and never
+//! anything the client itself asserts (see [`client_identity`]'s own doc
+//! for exactly how, and why it's more involved than a plain `/proc/<pid>/
+//! exe` read). That path is looked up in [`ScreencopyState`]'s grant table:
 //!
 //! - A prior **Allow** completes the capture immediately.
 //! - A prior **Deny**, or no decision yet, fails the capture
@@ -34,10 +34,22 @@
 //!   fails accordingly, and the decision is remembered from then on.
 //!
 //! This means every capturer - this compositor's own shell included - goes
-//! through the exact same gate; nothing is special-cased. The grant table
-//! is keyed by resolved executable path (`$XDG_CONFIG_HOME/ironland-
-//! compositor/capture-permissions.json`), which - unlike a client-supplied
-//! `app_id` string - cannot be spoofed by the client itself.
+//! through the exact same gate; nothing is special-cased.
+//!
+//! The grant table is **in-memory only, for this compositor process's own
+//! lifetime** - not persisted to disk. A resolved executable path is only a
+//! trustworthy, *stable* identity for as long as the binary it names hasn't
+//! been replaced or moved since it was granted; nothing on a general-
+//! purpose Linux system guarantees that across time (packages get
+//! upgraded, distro-specific store/cache paths get rewritten on rebuild,
+//! users move their own binaries around). Rather than chase that per
+//! packaging scheme - or worse, silently paper over it with a weaker,
+//! spoofable match like "same filename" - every grant simply expires when
+//! the compositor restarts, which on most setups coincides with exactly
+//! the moments (reboot, session restart) such changes tend to land anyway.
+//! What's missing to do better is an *actual* kernel-backed persistent
+//! identity for "this specific program, even after it's rebuilt/updated" -
+//! not something available on Linux today.
 //!
 //! [state]: crate::state
 //!
@@ -68,9 +80,10 @@
 //!   [`fulfill`] on that.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::os::unix::fs::MetadataExt;
 use std::time::Duration;
 
+use rustix::process::{Pid, PidfdFlags, pidfd_open};
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::{ExportMem, Renderer};
 use smithay::output::Output;
@@ -82,8 +95,8 @@ use smithay::wayland::shm::with_buffer_contents_mut;
 
 /// Compositor-side state for the image-copy-capture pipeline: sessions kept
 /// alive for their duration, capture requests waiting on the next rendered
-/// frame of their output, and the persisted per-executable capture grants
-/// gating them - see the module doc.
+/// frame of their output, and the in-memory (see the module doc) per-
+/// executable capture grants gating them.
 #[derive(Debug, Default)]
 pub struct ScreencopyState {
     /// Owned sessions, kept alive as long as the client's session object is;
@@ -94,28 +107,13 @@ pub struct ScreencopyState {
     /// but not yet fulfilled, keyed by output name. Drained by [`fulfill`]
     /// after the next successful render of that output.
     pending: HashMap<String, Vec<Frame>>,
-    /// Per-executable-path capture decisions; see [`Self::grant`]/
-    /// [`Self::set_grant`].
+    /// Per-executable-path capture decisions, for this compositor process's
+    /// lifetime only; see [`Self::grant`]/[`Self::set_grant`] and the
+    /// module doc for why these deliberately aren't persisted to disk.
     grants: HashMap<String, bool>,
 }
 
 impl ScreencopyState {
-    /// Loads persisted grants from
-    /// `$XDG_CONFIG_HOME/ironland-compositor/capture-permissions.json`. A
-    /// missing or unreadable file is treated as "no decisions yet", not an
-    /// error - matches this compositor's other config/store loaders (see
-    /// e.g. `crate::config::Config::load`).
-    pub fn load() -> Self {
-        let grants = std::fs::read_to_string(grants_path())
-            .ok()
-            .and_then(|contents| serde_json::from_str(&contents).ok())
-            .unwrap_or_default();
-        ScreencopyState {
-            grants,
-            ..Default::default()
-        }
-    }
-
     pub fn queue_frame(&mut self, output_name: String, frame: Frame) {
         self.pending.entry(output_name).or_default().push(frame);
     }
@@ -139,13 +137,14 @@ impl ScreencopyState {
         self.sessions.retain(|session| session != destroyed);
     }
 
-    /// The persisted decision for `subject` (an executable path from
+    /// The decision on file for `subject` (an executable path from
     /// [`client_identity`]), if any.
     pub fn grant(&self, subject: &str) -> Option<bool> {
         self.grants.get(subject).copied()
     }
 
-    /// Records and persists a decision for `subject`. Called back via
+    /// Records a decision for `subject`, for the rest of this compositor
+    /// process's lifetime (see the module doc). Called back via
     /// `PermissionPromptHandler::capture_grant_resolved` once the user
     /// answers a prompt [`PermissionPromptManagerState::queue_internal`]
     /// queued (see `crate::state`'s impl of that trait).
@@ -153,42 +152,52 @@ impl ScreencopyState {
     /// [`PermissionPromptManagerState::queue_internal`]: crate::permission_prompt::PermissionPromptManagerState::queue_internal
     pub fn set_grant(&mut self, subject: String, allowed: bool) {
         self.grants.insert(subject, allowed);
-        let path = grants_path();
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok(json) = serde_json::to_string_pretty(&self.grants) {
-            let _ = std::fs::write(path, json);
-        }
     }
-}
-
-fn grants_path() -> PathBuf {
-    let config_home = std::env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".to_string())).join(".config")
-        });
-    config_home
-        .join("ironland-compositor")
-        .join("capture-permissions.json")
 }
 
 /// Identifies the executable behind `client`'s Wayland connection, for
 /// [`ScreencopyState`]'s grant table - see the module doc for why this
 /// (rather than any client-supplied string) is what capture decisions are
-/// keyed and prompted on. Resolved via the kernel (`SO_PEERCRED`, wrapped by
-/// [`Client::get_credentials`]) and `/proc/<pid>/exe`, so it can't be
-/// spoofed by the client itself. Falls back to a placeholder (still safe to
-/// prompt/gate on, just not a meaningful path) if either step fails - e.g.
-/// the process has already exited, or `/proc` isn't available.
+/// keyed and prompted on. Falls back to a placeholder (still safe to
+/// prompt/gate on, just not a meaningful path) if identification fails for
+/// any reason - e.g. the process has already exited, or `/proc` isn't
+/// available.
+///
+/// This is more than a plain `/proc/<pid>/exe` read because a raw pid
+/// number is, on its own, an unsafe thing to resolve lazily: `SO_PEERCRED`
+/// (via [`Client::get_credentials`]) gives a pid the kernel guarantees was
+/// genuinely this client's *at connect time*, frozen from then on - but if
+/// that original process has since exited, Linux is free to hand that same
+/// pid number to a completely unrelated later process, and a naive `/proc/
+/// <pid>/exe` read done long after connecting could silently resolve to
+/// *that* process instead. Calling this immediately after a client
+/// connects (see `crate::state::insert_client_with_identity`, this
+/// function's only caller) rather than lazily on first capture already
+/// closes almost all of that window; using a `pidfd` closes the rest:
+/// [`pidfd_open`] on that pid, taken immediately before and after the
+/// `/proc/<pid>/exe` read, returns a kernel-stable handle to *that specific
+/// task* - reused pids included, since a pidfd is bound to the task, not
+/// the number - so comparing the two pidfds' identities (their backing
+/// inode, stable since Linux 5.9) confirms the same task was alive and
+/// unchanged for the read's entire duration, or otherwise discards the
+/// result rather than risk misattributing it.
 pub fn client_identity(dh: &DisplayHandle, client: &Client) -> String {
     client
         .get_credentials(dh)
         .ok()
-        .and_then(|creds| std::fs::read_link(format!("/proc/{}/exe", creds.pid)).ok())
-        .map(|path| path.to_string_lossy().into_owned())
+        .and_then(|creds| resolve_exe_via_pidfd(creds.pid))
         .unwrap_or_else(|| "an unidentified application".to_string())
+}
+
+fn resolve_exe_via_pidfd(pid: i32) -> Option<String> {
+    let rpid = Pid::from_raw(pid)?;
+    let before = pidfd_open(rpid, PidfdFlags::empty()).ok()?;
+    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+    let after = pidfd_open(rpid, PidfdFlags::empty()).ok()?;
+
+    let before_ino = std::fs::File::from(before).metadata().ok()?.ino();
+    let after_ino = std::fs::File::from(after).metadata().ok()?.ino();
+    (before_ino == after_ino).then(|| exe.to_string_lossy().into_owned())
 }
 
 /// The size (in buffer/physical pixels) `ext-image-copy-capture-v1` buffer
