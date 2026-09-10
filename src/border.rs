@@ -154,46 +154,123 @@ where
     }
 }
 
-/// Builds the border element for `window_rect` (the focused window's own
-/// on-screen bounds, output-local logical coordinates), or `None` if the
-/// border is disabled, has no thickness, or its color doesn't parse.
-/// `corner_radius` should be the window's own rounded-corner radius (0 if
-/// corners are disabled), so the border follows it.
-pub fn build<R>(
-    renderer: &mut R,
-    window_rect: Rectangle<i32, Logical>,
-    settings: &BorderSettings,
-    corner_radius: f32,
-) -> Option<BorderRenderElement>
-where
-    R: Renderer + ImportAll + GlesCapable,
-{
-    if !settings.enabled || settings.thickness == 0 {
-        return None;
+/// Everything about a built [`BorderRenderElement`] that affects its
+/// rendered pixels or on-screen position - used by [`BorderCache`] to tell
+/// "genuinely changed" from "identical to last frame".
+#[derive(Debug, Clone, PartialEq)]
+struct BorderParams {
+    area: Rectangle<i32, Logical>,
+    color1: [f32; 4],
+    color2: [f32; 4],
+    angle: f32,
+    thickness: f32,
+    radius: f32,
+}
+
+/// Persists a [`BorderRenderElement`]'s identity (its [`Id`] and
+/// [`CommitCounter`]) across frames, so the damage tracker can recognize
+/// "this is the same border as last frame, unchanged" instead of treating
+/// every call to [`BorderCache::build`] as a brand-new element.
+///
+/// Building a fresh `Id`/`CommitCounter::default()` on every frame (as this
+/// used to do, and as [`RenderElement::damage_since`]'s default
+/// implementation is defined - full damage whenever the commit passed in
+/// doesn't match the element's current one, and *no* damage-tracker history
+/// exists yet for an `Id` it has never seen) meant this border's full
+/// bounding box - which, inflated outward from `window_rect` by only a
+/// couple of pixels, covers essentially the whole focused window - was
+/// unconditionally redamaged on *every single output refresh* the border
+/// was shown, regardless of whether the window, its focus, or the border
+/// settings had actually changed. At a 180Hz refresh rate that's a full
+/// extra composite pass roughly every 5.5ms just to redraw an unchanged
+/// window, eating directly into the render budget for that frame and making
+/// it more likely other work (a client's own damage, e.g. Brave scrolling)
+/// pushes a frame past its deadline. See `AnvilState::border_cache` for why
+/// this is keyed per-output rather than a single instance.
+#[derive(Debug)]
+pub struct BorderCache {
+    id: Id,
+    commit: CommitCounter,
+    last: Option<BorderParams>,
+}
+
+impl Default for BorderCache {
+    fn default() -> Self {
+        Self {
+            id: Id::new(),
+            commit: CommitCounter::default(),
+            last: None,
+        }
     }
-    let color1 = parse_hex(&settings.color)?;
-    let color2 = settings
-        .gradient_color
-        .as_deref()
-        .map(parse_hex)
-        .unwrap_or(Some(color1))?;
+}
 
-    let program = border_program(renderer.gles_renderer()).ok()?;
-    let thickness = settings.thickness as i32;
-    let area = Rectangle::new(
-        window_rect.loc - Point::from((thickness, thickness)),
-        window_rect.size + Size::from((2 * thickness, 2 * thickness)),
-    );
+impl BorderCache {
+    /// Builds the border element for `window_rect` (the focused window's own
+    /// on-screen bounds, output-local logical coordinates), or `None` if the
+    /// border is disabled, has no thickness, or its color doesn't parse.
+    /// `corner_radius` should be the window's own rounded-corner radius (0 if
+    /// corners are disabled), so the border follows it.
+    ///
+    /// Reuses this cache's `Id` across calls, and only bumps its
+    /// [`CommitCounter`] when the built element's params actually differ
+    /// from the last call - so the damage tracker sees "unchanged" (and
+    /// skips repainting it) on every frame where the border truly didn't
+    /// change.
+    pub fn build<R>(
+        &mut self,
+        renderer: &mut R,
+        window_rect: Rectangle<i32, Logical>,
+        settings: &BorderSettings,
+        corner_radius: f32,
+    ) -> Option<BorderRenderElement>
+    where
+        R: Renderer + ImportAll + GlesCapable,
+    {
+        if !settings.enabled || settings.thickness == 0 {
+            // Not shown this frame - forget the last-seen params, so if the
+            // border reappears later (re-enabled, or a new window gains
+            // focus) it's correctly treated as new content to damage rather
+            // than compared against stale params from before it vanished.
+            self.last = None;
+            return None;
+        }
+        let color1 = parse_hex(&settings.color)?;
+        let color2 = settings
+            .gradient_color
+            .as_deref()
+            .map(parse_hex)
+            .unwrap_or(Some(color1))?;
 
-    Some(BorderRenderElement {
-        id: Id::new(),
-        commit: CommitCounter::default(),
-        area,
-        program,
-        color1,
-        color2,
-        angle: settings.angle.to_radians(),
-        thickness: thickness as f32,
-        radius: corner_radius,
-    })
+        let program = border_program(renderer.gles_renderer()).ok()?;
+        let thickness = settings.thickness as i32;
+        let area = Rectangle::new(
+            window_rect.loc - Point::from((thickness, thickness)),
+            window_rect.size + Size::from((2 * thickness, 2 * thickness)),
+        );
+
+        let params = BorderParams {
+            area,
+            color1,
+            color2,
+            angle: settings.angle.to_radians(),
+            thickness: thickness as f32,
+            radius: corner_radius,
+        };
+        if self.last.as_ref() != Some(&params) {
+            self.commit.increment();
+            self.last = Some(params.clone());
+        }
+
+        Some(BorderRenderElement {
+            id: self.id.clone(),
+            commit: self.commit,
+            area,
+            program,
+            color1: params.color1,
+            color2: params.color2,
+            angle: params.angle,
+            thickness: params.thickness,
+            radius: params.radius,
+        })
+    }
 }

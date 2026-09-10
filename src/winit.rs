@@ -276,6 +276,9 @@ pub fn run_winit() {
                 0.0
             };
 
+            let border_cache = state.border_cache.entry(output.name()).or_default();
+            let drop_indicator_cache = state.drop_indicator_cache.entry(output.name()).or_default();
+
             let backend = &mut state.backend_data.backend;
 
             // draw the cursor as relevant
@@ -546,7 +549,9 @@ pub fn run_winit() {
                     focused_window_rect,
                     &border,
                     corner_radius,
+                    border_cache,
                     drop_indicator,
+                    drop_indicator_cache,
                 )
                 .map(|result| {
                     if let Some(size) = capture_size {

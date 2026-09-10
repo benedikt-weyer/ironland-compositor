@@ -1791,6 +1791,8 @@ impl AnvilState<UdevData> {
         }
 
         let perf_stats = self.perf_stats.entry(output.name()).or_default();
+        let border_cache = self.border_cache.entry(output.name()).or_default();
+        let drop_indicator_cache = self.drop_indicator_cache.entry(output.name()).or_default();
         let result = render_surface(
             surface,
             &mut renderer,
@@ -1810,7 +1812,9 @@ impl AnvilState<UdevData> {
             &self.config.corners,
             focused_window_rect,
             &self.config.border,
+            border_cache,
             drop_indicator,
+            drop_indicator_cache,
             &self.config.performance,
             &*perf_stats,
             pending_captures,
@@ -1909,7 +1913,9 @@ fn render_surface<'a>(
     corners: &crate::config::CornersSettings,
     focused_window_rect: Option<Rectangle<i32, Logical>>,
     border: &crate::config::BorderSettings,
+    border_cache: &mut crate::border::BorderCache,
     drop_indicator: Option<Rectangle<i32, Logical>>,
+    drop_indicator_cache: &mut crate::border::BorderCache,
     performance: &crate::config::PerformanceSettings,
     perf_stats: &crate::perf_overlay::FrameStats,
     pending_captures: Vec<smithay::wayland::image_copy_capture::Frame>,
@@ -2108,7 +2114,9 @@ fn render_surface<'a>(
         focused_window_rect,
         border,
         corner_radius,
+        border_cache,
         drop_indicator,
+        drop_indicator_cache,
     );
 
     let frame_mode = if surface.disable_direct_scanout {

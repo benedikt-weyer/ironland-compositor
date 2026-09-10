@@ -277,6 +277,15 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     /// churn on the common case of a monitor being unplugged and replugged).
     pub perf_stats: HashMap<String, crate::perf_overlay::FrameStats>,
 
+    /// Persistent damage-tracking identity for the focus-highlight border
+    /// and the tiling drag-and-drop indicator, keyed by output name (see
+    /// `crate::border::BorderCache` for why a fresh element every frame was
+    /// a real performance bug, and why this needs to be per-output rather
+    /// than a single shared instance - the same window's border is drawn at
+    /// a different output-local position on each output it's rendered for).
+    pub border_cache: HashMap<String, crate::border::BorderCache>,
+    pub drop_indicator_cache: HashMap<String, crate::border::BorderCache>,
+
     /// The drop-target rect a tiling drag-and-drop is currently previewing
     /// (space-global logical coordinates), if a tiled window is being
     /// dragged and the pointer is over another tile - see
@@ -1123,6 +1132,8 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             wallpaper: crate::wallpaper::Wallpaper::load(config.wallpaper.as_deref()),
             workspace_overlay_shown: None,
             perf_stats: HashMap::new(),
+            border_cache: HashMap::new(),
+            drop_indicator_cache: HashMap::new(),
             tiling_drop_indicator: None,
             keybindings,
             super_tap_action,

@@ -172,7 +172,9 @@ pub fn output_elements<R>(
     focused_window_rect: Option<Rectangle<i32, Logical>>,
     border: &crate::config::BorderSettings,
     corner_radius: f32,
+    border_cache: &mut crate::border::BorderCache,
     drop_indicator: Option<Rectangle<i32, Logical>>,
+    drop_indicator_cache: &mut crate::border::BorderCache,
 ) -> (
     Vec<OutputRenderElements<R, WindowRenderElement<R>>>,
     Color32F,
@@ -252,7 +254,7 @@ where
         // shell's own chrome (list order is front-to-back).
         if let Some(mut window_rect) = focused_window_rect {
             window_rect.loc -= output_geometry.loc;
-            if let Some(element) = crate::border::build(renderer, window_rect, border, corner_radius) {
+            if let Some(element) = border_cache.build(renderer, window_rect, border, corner_radius) {
                 output_render_elements.push(OutputRenderElements::from(CustomRenderElements::Border(element)));
             }
         }
@@ -271,7 +273,9 @@ where
                 gradient_color: None,
                 angle: 0.0,
             };
-            if let Some(element) = crate::border::build(renderer, indicator_rect, &indicator_style, 0.0) {
+            if let Some(element) =
+                drop_indicator_cache.build(renderer, indicator_rect, &indicator_style, 0.0)
+            {
                 output_render_elements.push(OutputRenderElements::from(CustomRenderElements::Border(element)));
             }
         }
@@ -350,7 +354,9 @@ pub fn render_output<'a, 'd, R>(
     focused_window_rect: Option<Rectangle<i32, Logical>>,
     border: &crate::config::BorderSettings,
     corner_radius: f32,
+    border_cache: &mut crate::border::BorderCache,
     drop_indicator: Option<Rectangle<i32, Logical>>,
+    drop_indicator_cache: &mut crate::border::BorderCache,
 ) -> Result<RenderOutputResult<'d>, OutputDamageTrackerError<R::Error>>
 where
     R: Renderer + ImportAll + ImportMem + GlesCapable,
@@ -367,7 +373,9 @@ where
         focused_window_rect,
         border,
         corner_radius,
+        border_cache,
         drop_indicator,
+        drop_indicator_cache,
     );
     damage_tracker.render_output(renderer, framebuffer, age, &elements, clear_color)
 }
