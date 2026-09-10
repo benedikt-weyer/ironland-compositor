@@ -1831,6 +1831,7 @@ impl AnvilState<UdevData> {
         }
 
         let perf_stats = self.perf_stats.entry(output.name()).or_default();
+        let fps_overlay_cache = self.fps_overlay_cache.entry(output.name()).or_default();
         let border_cache = self.border_cache.entry(output.name()).or_default();
         let drop_indicator_cache = self.drop_indicator_cache.entry(output.name()).or_default();
         let capture_frame_index = surface.capture_frame_index;
@@ -1859,6 +1860,7 @@ impl AnvilState<UdevData> {
             drop_indicator_cache,
             &self.config.performance,
             &*perf_stats,
+            fps_overlay_cache,
             pending_captures,
             presented,
         );
@@ -2011,6 +2013,7 @@ fn render_surface<'a>(
     drop_indicator_cache: &mut crate::border::BorderCache,
     performance: &crate::config::PerformanceSettings,
     perf_stats: &crate::perf_overlay::FrameStats,
+    fps_overlay_cache: &mut crate::perf_overlay::OverlayCache,
     pending_captures: Vec<smithay::wayland::image_copy_capture::Frame>,
     presented: Duration,
 ) -> Result<(bool, RenderElementStates, RenderTimings), SwapBuffersError> {
@@ -2096,7 +2099,10 @@ fn render_surface<'a>(
     }
 
     if performance.fps_overlay {
-        let overlay_buffer = crate::perf_overlay::overlay_buffer(perf_stats);
+        let overlay_buffer = fps_overlay_cache.buffer(
+            perf_stats,
+            Duration::from_millis(performance.fps_overlay_interval_ms.into()),
+        );
         let location = crate::perf_overlay::overlay_location(
             performance.fps_overlay_position,
             output_geometry.size,
@@ -2106,7 +2112,7 @@ fn render_surface<'a>(
         if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
             renderer,
             location,
-            &overlay_buffer,
+            overlay_buffer,
             None,
             None,
             None,

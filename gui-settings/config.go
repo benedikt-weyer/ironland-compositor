@@ -116,6 +116,9 @@ type PerformanceSettings struct {
 	FPSOverlayPosition string  `json:"fps_overlay_position"`
 	StutterThresholdMs float64 `json:"stutter_threshold_ms"`
 	StutterLog         bool    `json:"stutter_log"`
+	// FPSOverlayIntervalMs is how often the overlay's text is redrawn, not
+	// how often frame timing is sampled (that's still every frame).
+	FPSOverlayIntervalMs uint32 `json:"fps_overlay_interval_ms"`
 }
 
 // Config mirrors `ironland_config::FullConfig` field-for-field (its own

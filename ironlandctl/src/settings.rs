@@ -69,6 +69,8 @@ pub enum SettingKey {
     PerformanceStutterThresholdMs,
     #[value(name = "performance.stutter_log")]
     PerformanceStutterLog,
+    #[value(name = "performance.fps_overlay_interval_ms")]
+    PerformanceFpsOverlayIntervalMs,
     #[value(name = "appearance.dark_mode")]
     AppearanceDarkMode,
     #[value(name = "workspaces.mode")]
@@ -116,6 +118,7 @@ impl SettingKey {
             PerformanceFpsOverlayPosition,
             PerformanceStutterThresholdMs,
             PerformanceStutterLog,
+            PerformanceFpsOverlayIntervalMs,
             AppearanceDarkMode,
             WorkspacesMode,
             WorkspacesCount,
@@ -156,6 +159,7 @@ impl SettingKey {
             PerformanceFpsOverlayPosition => "performance.fps_overlay_position",
             PerformanceStutterThresholdMs => "performance.stutter_threshold_ms",
             PerformanceStutterLog => "performance.stutter_log",
+            PerformanceFpsOverlayIntervalMs => "performance.fps_overlay_interval_ms",
             AppearanceDarkMode => "appearance.dark_mode",
             WorkspacesMode => "workspaces.mode",
             WorkspacesCount => "workspaces.count",
@@ -203,6 +207,7 @@ pub fn get(full: &FullConfig, key: SettingKey) -> String {
         }
         PerformanceStutterThresholdMs => cfg.performance.stutter_threshold_ms.to_string(),
         PerformanceStutterLog => cfg.performance.stutter_log.to_string(),
+        PerformanceFpsOverlayIntervalMs => cfg.performance.fps_overlay_interval_ms.to_string(),
         AppearanceDarkMode => full.appearance.dark_mode.to_string(),
         WorkspacesMode => workspace_mode_str(cfg.workspaces.mode).to_string(),
         WorkspacesCount => cfg.workspaces.count.to_string(),
@@ -285,6 +290,7 @@ fn table_and_leaf(key: SettingKey) -> (&'static [&'static str], &'static str) {
         PerformanceFpsOverlayPosition => (&["performance"], "fps_overlay_position"),
         PerformanceStutterThresholdMs => (&["performance"], "stutter_threshold_ms"),
         PerformanceStutterLog => (&["performance"], "stutter_log"),
+        PerformanceFpsOverlayIntervalMs => (&["performance"], "fps_overlay_interval_ms"),
         AppearanceDarkMode => (&["appearance"], "dark_mode"),
         WorkspacesMode => (&["workspaces"], "mode"),
         WorkspacesCount => (&["workspaces"], "count"),
@@ -394,6 +400,9 @@ pub fn set(doc: &mut DocumentMut, key: SettingKey, raw: &str) -> Result<()> {
                 bail!("workspace count must be at least 1");
             }
             table[leaf] = value(i64::from(count));
+        }
+        PerformanceFpsOverlayIntervalMs => {
+            table[leaf] = value(i64::from(parse_u32(raw)?));
         }
     }
     Ok(())

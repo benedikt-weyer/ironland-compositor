@@ -278,6 +278,11 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     /// churn on the common case of a monitor being unplugged and replugged).
     pub perf_stats: HashMap<String, crate::perf_overlay::FrameStats>,
 
+    /// Rasterized FPS-overlay texture per output, rebuilt from `perf_stats`
+    /// only on `config.performance.fps_overlay_interval_ms`'s cadence - see
+    /// `crate::perf_overlay::OverlayCache`.
+    pub fps_overlay_cache: HashMap<String, crate::perf_overlay::OverlayCache>,
+
     /// How long the most recent `dispatch_clients` call (the Wayland
     /// display socket's calloop source, below) took - fed into
     /// `crate::frame_capture`'s "dispatch_clients" stage by whichever
@@ -1156,6 +1161,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             wallpaper: crate::wallpaper::Wallpaper::load(config.wallpaper.as_deref()),
             workspace_overlay_shown: None,
             perf_stats: HashMap::new(),
+            fps_overlay_cache: HashMap::new(),
             last_dispatch_duration: Duration::ZERO,
             border_cache: HashMap::new(),
             drop_indicator_cache: HashMap::new(),

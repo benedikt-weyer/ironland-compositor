@@ -132,6 +132,35 @@ pub fn stutter_threshold(settings: &PerformanceSettings, refresh_mhz: Option<i32
     Duration::from_secs_f64(1.5 / hz)
 }
 
+/// Caches the FPS overlay's rasterized texture across frames, rebuilding it
+/// from [`FrameStats`] only every `config.performance.fps_overlay_interval_ms`
+/// (see [`OverlayCache::buffer`]) rather than on every single frame -
+/// rebuilding it every frame does real, avoidable work (allocating a canvas
+/// and rasterizing bitmap text) purely for a number a human glances at, not
+/// something that needs to be legible at the output's own refresh rate.
+/// Frame timing itself (and stutter detection) is unaffected - only the
+/// overlay's *drawn* text lags behind by up to the configured interval.
+#[derive(Debug, Default)]
+pub struct OverlayCache {
+    built: Option<(MemoryRenderBuffer, Instant)>,
+}
+
+impl OverlayCache {
+    /// Returns the cached overlay texture, rebuilding it from `stats` first
+    /// if there's nothing cached yet, `interval` is zero (throttling
+    /// disabled), or the cached texture is older than `interval`.
+    pub fn buffer(&mut self, stats: &FrameStats, interval: Duration) -> &MemoryRenderBuffer {
+        let stale = self
+            .built
+            .as_ref()
+            .is_none_or(|(_, built_at)| interval.is_zero() || built_at.elapsed() >= interval);
+        if stale {
+            self.built = Some((overlay_buffer(stats), Instant::now()));
+        }
+        &self.built.as_ref().expect("just set above if it was missing").0
+    }
+}
+
 const FONT_SCALE: i32 = 2;
 const PADDING: i32 = 10;
 const LINE_GAP: i32 = 4;
@@ -293,5 +322,34 @@ mod tests {
         };
         let threshold = stutter_threshold(&settings, Some(144_000));
         assert!((threshold.as_secs_f64() - 0.033).abs() < 1e-6);
+    }
+
+    #[test]
+    fn overlay_cache_rebuilds_only_after_interval_elapses() {
+        let stats = FrameStats::new();
+        let mut cache = OverlayCache::default();
+
+        cache.buffer(&stats, Duration::from_secs(10));
+        let first_built_at = cache.built.as_ref().unwrap().1;
+
+        cache.buffer(&stats, Duration::from_secs(10));
+        let second_built_at = cache.built.as_ref().unwrap().1;
+
+        assert_eq!(first_built_at, second_built_at, "shouldn't rebuild before the interval elapses");
+    }
+
+    #[test]
+    fn overlay_cache_always_rebuilds_when_interval_is_zero() {
+        let stats = FrameStats::new();
+        let mut cache = OverlayCache::default();
+
+        cache.buffer(&stats, Duration::ZERO);
+        let first_built_at = cache.built.as_ref().unwrap().1;
+
+        std::thread::sleep(Duration::from_millis(1));
+        cache.buffer(&stats, Duration::ZERO);
+        let second_built_at = cache.built.as_ref().unwrap().1;
+
+        assert!(second_built_at > first_built_at, "interval 0 should disable the throttle");
     }
 }

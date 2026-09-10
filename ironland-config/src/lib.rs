@@ -277,6 +277,15 @@ pub struct PerformanceSettings {
     /// (`journalctl --user -u ...`, or the terminal under `run`), in
     /// addition to being reflected in the overlay itself.
     pub stutter_log: bool,
+    /// How often the FPS overlay's *text* is redrawn, in milliseconds.
+    /// Frame timing is still recorded every frame regardless (stutter
+    /// detection doesn't depend on this), but rebuilding and re-rasterizing
+    /// the overlay's own tiny texture on every single frame is unnecessary
+    /// work purely for a number a human is going to glance at, not read at
+    /// 180Hz - `0` disables the throttle and redraws every frame, mainly
+    /// for comparing against this default while investigating a
+    /// suspected-slow render path.
+    pub fps_overlay_interval_ms: u32,
 }
 
 impl Default for PerformanceSettings {
@@ -286,6 +295,7 @@ impl Default for PerformanceSettings {
             fps_overlay_position: OverlayPosition::TopRight,
             stutter_threshold_ms: 0.0,
             stutter_log: true,
+            fps_overlay_interval_ms: 500,
         }
     }
 }
@@ -880,15 +890,17 @@ mod tests {
         assert_eq!(raw.performance.fps_overlay_position, OverlayPosition::TopRight);
         assert_eq!(raw.performance.stutter_threshold_ms, 0.0);
         assert!(raw.performance.stutter_log);
+        assert_eq!(raw.performance.fps_overlay_interval_ms, 500);
 
         let raw: RawConfig = toml::from_str(
-            "[performance]\nfps_overlay = true\nfps_overlay_position = \"bottom_left\"\nstutter_threshold_ms = 20.0\nstutter_log = false\n",
+            "[performance]\nfps_overlay = true\nfps_overlay_position = \"bottom_left\"\nstutter_threshold_ms = 20.0\nstutter_log = false\nfps_overlay_interval_ms = 1000\n",
         )
         .unwrap();
         assert!(raw.performance.fps_overlay);
         assert_eq!(raw.performance.fps_overlay_position, OverlayPosition::BottomLeft);
         assert_eq!(raw.performance.stutter_threshold_ms, 20.0);
         assert!(!raw.performance.stutter_log);
+        assert_eq!(raw.performance.fps_overlay_interval_ms, 1000);
     }
 
     #[test]

@@ -327,9 +327,11 @@ pub fn run_winit() {
             });
 
             let performance = state.config.performance.clone();
+            let overlay_interval = Duration::from_millis(performance.fps_overlay_interval_ms.into());
             let perf_overlay_buffer_and_location = performance.fps_overlay.then(|| {
                 let stats = state.perf_stats.entry(output.name()).or_default();
-                let buffer = crate::perf_overlay::overlay_buffer(stats);
+                let cache = state.fps_overlay_cache.entry(output.name()).or_default();
+                let buffer = cache.buffer(stats, overlay_interval).clone();
                 let output_size = state.space.output_geometry(&output).unwrap().size;
                 let location = crate::perf_overlay::overlay_location(
                     performance.fps_overlay_position,
