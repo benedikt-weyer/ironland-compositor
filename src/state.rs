@@ -270,6 +270,13 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     /// [`crate::shell::workspace::OVERLAY_DURATION_MS`]; see the render loops.
     pub workspace_overlay_shown: Option<std::time::Instant>,
 
+    /// FPS/frame-time history and stutter counters, keyed by output name -
+    /// see `crate::perf_overlay` and `config.performance`. Entries are
+    /// created lazily the first time a given output renders a frame and
+    /// simply left in place if the output disappears (cheap, and avoids
+    /// churn on the common case of a monitor being unplugged and replugged).
+    pub perf_stats: HashMap<String, crate::perf_overlay::FrameStats>,
+
     /// The drop-target rect a tiling drag-and-drop is currently previewing
     /// (space-global logical coordinates), if a tiled window is being
     /// dragged and the pointer is over another tile - see
@@ -1115,12 +1122,38 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             launcher: crate::drawing::LauncherState::default(),
             wallpaper: crate::wallpaper::Wallpaper::load(config.wallpaper.as_deref()),
             workspace_overlay_shown: None,
+            perf_stats: HashMap::new(),
             tiling_drop_indicator: None,
             keybindings,
             super_tap_action,
             super_tap_pending: None,
             config,
             config_last_checked: Instant::now(),
+        }
+    }
+
+    /// Records that `output` just rendered/presented a frame at `now`,
+    /// updating its [`crate::perf_overlay::FrameStats`] and logging a
+    /// `tracing::warn!` if it counted as a stutter and
+    /// `config.performance.stutter_log` is on. Both backends call this once
+    /// per successfully rendered frame (see `udev.rs`/`winit.rs`), whether
+    /// or not the FPS overlay is currently shown, so the overlay's history
+    /// isn't empty the moment it's toggled on.
+    pub fn record_frame_stats(&mut self, output: &Output, now: Instant) {
+        let refresh_mhz = output.current_mode().map(|mode| mode.refresh);
+        let threshold = crate::perf_overlay::stutter_threshold(&self.config.performance, refresh_mhz);
+        let name = output.name();
+        let stats = self.perf_stats.entry(name.clone()).or_default();
+        if let Some(frame_time) = stats.record_frame(now, threshold)
+            && self.config.performance.stutter_log
+        {
+            warn!(
+                output = %name,
+                frame_time_ms = frame_time.as_secs_f64() * 1000.0,
+                threshold_ms = threshold.as_secs_f64() * 1000.0,
+                total_stutters = stats.stutter_count(),
+                "frame stutter detected"
+            );
         }
     }
 

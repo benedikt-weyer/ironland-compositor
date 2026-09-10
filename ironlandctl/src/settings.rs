@@ -61,6 +61,14 @@ pub enum SettingKey {
     FocusFollowsMouse,
     #[value(name = "focus.mouse_follows_focus")]
     FocusMouseFollowsFocus,
+    #[value(name = "performance.fps_overlay")]
+    PerformanceFpsOverlay,
+    #[value(name = "performance.fps_overlay_position")]
+    PerformanceFpsOverlayPosition,
+    #[value(name = "performance.stutter_threshold_ms")]
+    PerformanceStutterThresholdMs,
+    #[value(name = "performance.stutter_log")]
+    PerformanceStutterLog,
     #[value(name = "appearance.dark_mode")]
     AppearanceDarkMode,
     #[value(name = "workspaces.mode")]
@@ -104,6 +112,10 @@ impl SettingKey {
             CursorSize,
             FocusFollowsMouse,
             FocusMouseFollowsFocus,
+            PerformanceFpsOverlay,
+            PerformanceFpsOverlayPosition,
+            PerformanceStutterThresholdMs,
+            PerformanceStutterLog,
             AppearanceDarkMode,
             WorkspacesMode,
             WorkspacesCount,
@@ -140,6 +152,10 @@ impl SettingKey {
             CursorSize => "cursor.size",
             FocusFollowsMouse => "focus.follows_mouse",
             FocusMouseFollowsFocus => "focus.mouse_follows_focus",
+            PerformanceFpsOverlay => "performance.fps_overlay",
+            PerformanceFpsOverlayPosition => "performance.fps_overlay_position",
+            PerformanceStutterThresholdMs => "performance.stutter_threshold_ms",
+            PerformanceStutterLog => "performance.stutter_log",
             AppearanceDarkMode => "appearance.dark_mode",
             WorkspacesMode => "workspaces.mode",
             WorkspacesCount => "workspaces.count",
@@ -181,6 +197,12 @@ pub fn get(full: &FullConfig, key: SettingKey) -> String {
         CursorSize => cfg.cursor.size.map(|s| s.to_string()).unwrap_or_default(),
         FocusFollowsMouse => cfg.focus.follows_mouse.to_string(),
         FocusMouseFollowsFocus => cfg.focus.mouse_follows_focus.to_string(),
+        PerformanceFpsOverlay => cfg.performance.fps_overlay.to_string(),
+        PerformanceFpsOverlayPosition => {
+            overlay_position_str(cfg.performance.fps_overlay_position).to_string()
+        }
+        PerformanceStutterThresholdMs => cfg.performance.stutter_threshold_ms.to_string(),
+        PerformanceStutterLog => cfg.performance.stutter_log.to_string(),
         AppearanceDarkMode => full.appearance.dark_mode.to_string(),
         WorkspacesMode => workspace_mode_str(cfg.workspaces.mode).to_string(),
         WorkspacesCount => cfg.workspaces.count.to_string(),
@@ -193,6 +215,16 @@ fn workspace_mode_str(mode: ironland_config::WorkspaceMode) -> &'static str {
     match mode {
         ironland_config::WorkspaceMode::PerMonitor => "per_monitor",
         ironland_config::WorkspaceMode::Combined => "combined",
+    }
+}
+
+fn overlay_position_str(position: ironland_config::OverlayPosition) -> &'static str {
+    use ironland_config::OverlayPosition::*;
+    match position {
+        TopLeft => "top_left",
+        TopRight => "top_right",
+        BottomLeft => "bottom_left",
+        BottomRight => "bottom_right",
     }
 }
 
@@ -249,6 +281,10 @@ fn table_and_leaf(key: SettingKey) -> (&'static [&'static str], &'static str) {
         CursorSize => (&["cursor"], "size"),
         FocusFollowsMouse => (&["focus"], "follows_mouse"),
         FocusMouseFollowsFocus => (&["focus"], "mouse_follows_focus"),
+        PerformanceFpsOverlay => (&["performance"], "fps_overlay"),
+        PerformanceFpsOverlayPosition => (&["performance"], "fps_overlay_position"),
+        PerformanceStutterThresholdMs => (&["performance"], "stutter_threshold_ms"),
+        PerformanceStutterLog => (&["performance"], "stutter_log"),
         AppearanceDarkMode => (&["appearance"], "dark_mode"),
         WorkspacesMode => (&["workspaces"], "mode"),
         WorkspacesCount => (&["workspaces"], "count"),
@@ -290,6 +326,8 @@ pub fn set(doc: &mut DocumentMut, key: SettingKey, raw: &str) -> Result<()> {
         | BorderEnabled
         | FocusFollowsMouse
         | FocusMouseFollowsFocus
+        | PerformanceFpsOverlay
+        | PerformanceStutterLog
         | WorkspacesDynamic
         | WorkspacesOverlay
         | AppearanceDarkMode => {
@@ -328,6 +366,27 @@ pub fn set(doc: &mut DocumentMut, key: SettingKey, raw: &str) -> Result<()> {
                 other => bail!("expected per_monitor or combined, got {other:?}"),
             };
             table[leaf] = value(mode);
+        }
+        PerformanceFpsOverlayPosition => {
+            let position = match raw {
+                "top_left" => "top_left",
+                "top_right" => "top_right",
+                "bottom_left" => "bottom_left",
+                "bottom_right" => "bottom_right",
+                other => bail!(
+                    "expected top_left, top_right, bottom_left or bottom_right, got {other:?}"
+                ),
+            };
+            table[leaf] = value(position);
+        }
+        PerformanceStutterThresholdMs => {
+            let threshold = raw
+                .parse::<f32>()
+                .map_err(|_| anyhow::anyhow!("expected a number of milliseconds, got {raw:?}"))?;
+            if threshold < 0.0 {
+                bail!("stutter threshold must be 0 (auto) or positive, got {threshold}");
+            }
+            table[leaf] = value(f64::from(threshold));
         }
         WorkspacesCount => {
             let count = parse_u32(raw)?;

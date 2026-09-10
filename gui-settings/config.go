@@ -103,6 +103,21 @@ type FocusSettings struct {
 	MouseFollowsFocus bool `json:"mouse_follows_focus"`
 }
 
+// PerformanceSettings mirrors `ironland_config::PerformanceSettings`: the
+// on-screen FPS/frame-time overlay and frame stutter analytics, off by
+// default. There is no dedicated GUI tab for these yet - this struct exists
+// so a `Config` round-tripped through this GUI (load, edit something else,
+// apply) doesn't silently wipe a performance section set via `ironlandctl`
+// or the shell's Nexus settings.
+type PerformanceSettings struct {
+	FPSOverlay bool `json:"fps_overlay"`
+	// FPSOverlayPosition is one of "top_left", "top_right", "bottom_left",
+	// "bottom_right".
+	FPSOverlayPosition string  `json:"fps_overlay_position"`
+	StutterThresholdMs float64 `json:"stutter_threshold_ms"`
+	StutterLog         bool    `json:"stutter_log"`
+}
+
 // Config mirrors `ironland_config::FullConfig` field-for-field (its own
 // `#[serde(flatten)]` on the inner `Config` puts these fields at the top
 // level, alongside Appearance) - see `ironlandctl show --json`.
@@ -118,17 +133,18 @@ type Config struct {
 	// Wallpaper is a path to an image file (PNG/JPEG/WebP) used as the
 	// desktop background, scaled and center-cropped to cover each output.
 	// Empty uses the compositor's built-in default wallpaper.
-	Wallpaper  string                    `json:"wallpaper"`
-	Blur       BlurSettings              `json:"blur"`
-	Corners    CornersSettings           `json:"corners"`
-	Gaps       GapsSettings              `json:"gaps"`
-	Border     BorderSettings            `json:"border"`
-	Cursor     CursorSettings            `json:"cursor"`
-	Focus      FocusSettings             `json:"focus"`
-	Appearance AppearanceSettings        `json:"appearance"`
-	Shortcuts  map[string][]string       `json:"shortcuts"`
-	Outputs    map[string]OutputSettings `json:"outputs"`
-	Workspaces WorkspaceSettings         `json:"workspaces"`
+	Wallpaper   string                    `json:"wallpaper"`
+	Blur        BlurSettings              `json:"blur"`
+	Corners     CornersSettings           `json:"corners"`
+	Gaps        GapsSettings              `json:"gaps"`
+	Border      BorderSettings            `json:"border"`
+	Cursor      CursorSettings            `json:"cursor"`
+	Focus       FocusSettings             `json:"focus"`
+	Performance PerformanceSettings       `json:"performance"`
+	Appearance  AppearanceSettings        `json:"appearance"`
+	Shortcuts   map[string][]string       `json:"shortcuts"`
+	Outputs     map[string]OutputSettings `json:"outputs"`
+	Workspaces  WorkspaceSettings         `json:"workspaces"`
 }
 
 // OutputPosition mirrors `ironland_config::OutputPosition`: exactly one of

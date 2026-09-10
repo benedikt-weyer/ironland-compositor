@@ -1790,6 +1790,7 @@ impl AnvilState<UdevData> {
             self.workspace_overlay_shown = None;
         }
 
+        let perf_stats = self.perf_stats.entry(output.name()).or_default();
         let result = render_surface(
             surface,
             &mut renderer,
@@ -1810,6 +1811,8 @@ impl AnvilState<UdevData> {
             focused_window_rect,
             &self.config.border,
             drop_indicator,
+            &self.config.performance,
+            &*perf_stats,
             pending_captures,
             presented,
         );
@@ -1817,6 +1820,9 @@ impl AnvilState<UdevData> {
             Ok((has_rendered, states)) => {
                 let dmabuf_feedback = surface.dmabuf_feedback.clone();
                 self.post_repaint(&output, frame_target, dmabuf_feedback, &states);
+                if has_rendered {
+                    self.record_frame_stats(&output, Instant::now());
+                }
                 !has_rendered
             }
             Err(err) => {
@@ -1904,6 +1910,8 @@ fn render_surface<'a>(
     focused_window_rect: Option<Rectangle<i32, Logical>>,
     border: &crate::config::BorderSettings,
     drop_indicator: Option<Rectangle<i32, Logical>>,
+    performance: &crate::config::PerformanceSettings,
+    perf_stats: &crate::perf_overlay::FrameStats,
     pending_captures: Vec<smithay::wayland::image_copy_capture::Frame>,
     presented: Duration,
 ) -> Result<(bool, RenderElementStates), SwapBuffersError> {
@@ -1985,6 +1993,27 @@ fn render_surface<'a>(
         element.update_fps(surface.fps.avg().round() as u32);
         surface.fps.tick();
         custom_elements.push(CustomRenderElements::Fps(element.clone()));
+    }
+
+    if performance.fps_overlay {
+        let overlay_buffer = crate::perf_overlay::overlay_buffer(perf_stats);
+        let location = crate::perf_overlay::overlay_location(
+            performance.fps_overlay_position,
+            output_geometry.size,
+        )
+        .to_f64()
+        .to_physical(scale);
+        if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
+            renderer,
+            location,
+            &overlay_buffer,
+            None,
+            None,
+            None,
+            Kind::Unspecified,
+        ) {
+            custom_elements.push(CustomRenderElements::Overlay(element));
+        }
     }
 
     let launcher_size = launcher.logical_size();

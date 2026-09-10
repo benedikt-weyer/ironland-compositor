@@ -245,6 +245,51 @@ pub struct FocusSettings {
     pub mouse_follows_focus: bool,
 }
 
+/// Where the FPS/frame-time overlay is anchored on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OverlayPosition {
+    TopLeft,
+    #[default]
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+/// On-screen FPS overlay and frame stutter analytics. Off by default -
+/// purely a diagnostic tool, not something that should draw over a user's
+/// session unasked.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct PerformanceSettings {
+    /// Draws a small per-output overlay with the current FPS, last frame
+    /// time, and a running stutter count.
+    pub fps_overlay: bool,
+    /// Screen corner the overlay is anchored to.
+    pub fps_overlay_position: OverlayPosition,
+    /// Frame time, in milliseconds, above which a frame counts as a
+    /// "stutter" (shown in the overlay and, if `stutter_log` is on, logged).
+    /// `0.0` (the default) picks this automatically as 1.5x the expected
+    /// frame time for the output's current refresh rate (falling back to
+    /// 60Hz if that isn't known yet).
+    pub stutter_threshold_ms: f32,
+    /// Whether a detected stutter is also logged via `tracing::warn!`
+    /// (`journalctl --user -u ...`, or the terminal under `run`), in
+    /// addition to being reflected in the overlay itself.
+    pub stutter_log: bool,
+}
+
+impl Default for PerformanceSettings {
+    fn default() -> Self {
+        Self {
+            fps_overlay: false,
+            fps_overlay_position: OverlayPosition::TopRight,
+            stutter_threshold_ms: 0.0,
+            stutter_log: true,
+        }
+    }
+}
+
 /// GUI/CLI-only appearance state: the compositor itself has no notion of a
 /// color scheme, so this isn't part of [`Config`] - the compositor's
 /// [`RawConfig`]-equivalent parser simply ignores an `[appearance]` table it
@@ -272,6 +317,7 @@ struct RawConfig {
     border: BorderSettings,
     cursor: CursorSettings,
     focus: FocusSettings,
+    performance: PerformanceSettings,
     shortcuts: HashMap<String, Vec<String>>,
     outputs: HashMap<String, OutputSettings>,
     workspaces: WorkspaceSettings,
@@ -308,6 +354,8 @@ pub struct Config {
     pub cursor: CursorSettings,
     /// Pointer/keyboard-focus interaction (see [`FocusSettings`]).
     pub focus: FocusSettings,
+    /// FPS overlay and frame stutter analytics (see [`PerformanceSettings`]).
+    pub performance: PerformanceSettings,
     /// action name -> key combos, e.g. `"toggle_launcher" -> ["ctrl+space"]`.
     /// Always fully populated: entries not overridden by the config file
     /// keep their built-in default.
@@ -335,6 +383,7 @@ impl Default for Config {
             border: BorderSettings::default(),
             cursor: CursorSettings::default(),
             focus: FocusSettings::default(),
+            performance: PerformanceSettings::default(),
             shortcuts: default_shortcuts(),
             outputs: HashMap::new(),
             workspaces: WorkspaceSettings::default(),
@@ -569,6 +618,7 @@ impl Config {
                     border: raw.border,
                     cursor: raw.cursor,
                     focus: raw.focus,
+                    performance: raw.performance,
                     shortcuts,
                     outputs: raw.outputs,
                     workspaces: raw.workspaces,
@@ -650,6 +700,7 @@ mod tests {
             border: BorderSettings::default(),
             cursor: CursorSettings::default(),
             focus: FocusSettings::default(),
+            performance: PerformanceSettings::default(),
             shortcuts,
             outputs: HashMap::new(),
             workspaces: WorkspaceSettings::default(),
@@ -819,6 +870,25 @@ mod tests {
 
         let raw: RawConfig = toml::from_str("[workspaces]\ntransition_axis = \"vertical\"\n").unwrap();
         assert_eq!(raw.workspaces.transition_axis, WorkspaceTransitionAxis::Vertical);
+    }
+
+    #[test]
+    fn performance_defaults_off_and_parses() {
+        let raw: RawConfig = toml::from_str("").unwrap();
+        assert_eq!(raw.performance, PerformanceSettings::default());
+        assert!(!raw.performance.fps_overlay);
+        assert_eq!(raw.performance.fps_overlay_position, OverlayPosition::TopRight);
+        assert_eq!(raw.performance.stutter_threshold_ms, 0.0);
+        assert!(raw.performance.stutter_log);
+
+        let raw: RawConfig = toml::from_str(
+            "[performance]\nfps_overlay = true\nfps_overlay_position = \"bottom_left\"\nstutter_threshold_ms = 20.0\nstutter_log = false\n",
+        )
+        .unwrap();
+        assert!(raw.performance.fps_overlay);
+        assert_eq!(raw.performance.fps_overlay_position, OverlayPosition::BottomLeft);
+        assert_eq!(raw.performance.stutter_threshold_ms, 20.0);
+        assert!(!raw.performance.stutter_log);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use std::{
     sync::{Mutex, atomic::Ordering},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[cfg(feature = "egl")]
@@ -317,6 +317,20 @@ pub fn run_winit() {
                 .to_physical(scale)
             });
 
+            let performance = state.config.performance.clone();
+            let perf_overlay_buffer_and_location = performance.fps_overlay.then(|| {
+                let stats = state.perf_stats.entry(output.name()).or_default();
+                let buffer = crate::perf_overlay::overlay_buffer(stats);
+                let output_size = state.space.output_geometry(&output).unwrap().size;
+                let location = crate::perf_overlay::overlay_location(
+                    performance.fps_overlay_position,
+                    output_size,
+                )
+                .to_f64()
+                .to_physical(scale);
+                (buffer, location)
+            });
+
             let permission_prompt_buffer = state.permission_prompt.ensure_buffer().cloned();
             let permission_prompt_location = permission_prompt_buffer.as_ref().map(|_| {
                 let output_size = state.space.output_geometry(&output).unwrap().size;
@@ -445,6 +459,20 @@ pub fn run_winit() {
 
                 #[cfg(feature = "debug")]
                 elements.push(CustomRenderElements::Fps(fps_element.clone()));
+
+                if let Some((buffer, location)) = &perf_overlay_buffer_and_location {
+                    if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
+                        renderer,
+                        *location,
+                        buffer,
+                        None,
+                        None,
+                        None,
+                        Kind::Unspecified,
+                    ) {
+                        elements.push(CustomRenderElements::Overlay(element));
+                    }
+                }
 
                 let background_element = MemoryRenderBufferRenderElement::from_buffer(
                     renderer,
@@ -584,6 +612,7 @@ pub fn run_winit() {
                     );
 
                     if has_rendered {
+                        state.record_frame_stats(&output, Instant::now());
                         let mut output_presentation_feedback =
                             take_presentation_feedback(&output, &state.space, &states);
                         output_presentation_feedback.presented(
