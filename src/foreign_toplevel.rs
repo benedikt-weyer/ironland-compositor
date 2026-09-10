@@ -78,9 +78,12 @@ impl<B: Backend> ForeignToplevelHandler for AnvilState<B> {
     }
 
     fn close_toplevel(&mut self, window: &WindowElement) {
-        #[allow(irrefutable_let_patterns)]
-        if let Some(toplevel) = window.0.toplevel() {
-            toplevel.send_close();
+        match window.0.underlying_surface() {
+            WindowSurface::Wayland(toplevel) => toplevel.send_close(),
+            #[cfg(feature = "xwayland")]
+            WindowSurface::X11(surface) => {
+                let _ = surface.close();
+            }
         }
     }
 }

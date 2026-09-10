@@ -221,9 +221,14 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     if let Some(crate::focus::KeyboardFocusTarget::Window(w)) =
                         keyboard.current_focus()
                     {
-                        #[allow(irrefutable_let_patterns)]
-                        if let Some(toplevel) = w.toplevel() {
-                            toplevel.send_close();
+                        match w.underlying_surface() {
+                            smithay::desktop::WindowSurface::Wayland(toplevel) => {
+                                toplevel.send_close();
+                            }
+                            #[cfg(feature = "xwayland")]
+                            smithay::desktop::WindowSurface::X11(surface) => {
+                                let _ = surface.close();
+                            }
                         }
                     }
                 }
