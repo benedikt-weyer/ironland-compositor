@@ -213,35 +213,6 @@ where
         let output_geometry = space.output_geometry(output).unwrap_or_default();
         let output_scale = output.current_scale().fractional_scale();
 
-        // The focus-highlight border, drawn in front of every window (list
-        // order is front-to-back, same as the pointer/preview elements
-        // already collected into `output_render_elements` above).
-        if let Some(mut window_rect) = focused_window_rect {
-            window_rect.loc -= output_geometry.loc;
-            if let Some(element) = crate::border::build(renderer, window_rect, border, corner_radius) {
-                output_render_elements.push(OutputRenderElements::from(CustomRenderElements::Border(element)));
-            }
-        }
-
-        // The tiling drag-and-drop indicator, previewing where a dragged
-        // tiled window would land if dropped now (see
-        // `shell::tiling::drop_target`). Reuses the focus-border shader with
-        // its own fixed style rather than the user's border config, since
-        // it's a transient snap-preview, not the window-highlight feature.
-        if let Some(mut indicator_rect) = drop_indicator {
-            indicator_rect.loc -= output_geometry.loc;
-            let indicator_style = crate::config::BorderSettings {
-                enabled: true,
-                thickness: DROP_INDICATOR_THICKNESS,
-                color: DROP_INDICATOR_COLOR.to_string(),
-                gradient_color: None,
-                angle: 0.0,
-            };
-            if let Some(element) = crate::border::build(renderer, indicator_rect, &indicator_style, 0.0) {
-                output_render_elements.push(OutputRenderElements::from(CustomRenderElements::Border(element)));
-            }
-        }
-
         // Background/bottom layer-shell surfaces (e.g. a shell's own
         // wallpaper) are rendered separately below, *behind* the blur, so
         // that an opaque client-drawn background can't hide it. Top/overlay
@@ -274,6 +245,36 @@ where
         };
 
         output_render_elements.extend(render_layers(&upper_layers, renderer));
+
+        // The focus-highlight border, drawn in front of every window but
+        // behind top/overlay layer-shell surfaces (bars, popups) pushed just
+        // above, so a maximized/tiled window's border never paints over the
+        // shell's own chrome (list order is front-to-back).
+        if let Some(mut window_rect) = focused_window_rect {
+            window_rect.loc -= output_geometry.loc;
+            if let Some(element) = crate::border::build(renderer, window_rect, border, corner_radius) {
+                output_render_elements.push(OutputRenderElements::from(CustomRenderElements::Border(element)));
+            }
+        }
+
+        // The tiling drag-and-drop indicator, previewing where a dragged
+        // tiled window would land if dropped now (see
+        // `shell::tiling::drop_target`). Reuses the focus-border shader with
+        // its own fixed style rather than the user's border config, since
+        // it's a transient snap-preview, not the window-highlight feature.
+        if let Some(mut indicator_rect) = drop_indicator {
+            indicator_rect.loc -= output_geometry.loc;
+            let indicator_style = crate::config::BorderSettings {
+                enabled: true,
+                thickness: DROP_INDICATOR_THICKNESS,
+                color: DROP_INDICATOR_COLOR.to_string(),
+                gradient_color: None,
+                angle: 0.0,
+            };
+            if let Some(element) = crate::border::build(renderer, indicator_rect, &indicator_style, 0.0) {
+                output_render_elements.push(OutputRenderElements::from(CustomRenderElements::Border(element)));
+            }
+        }
 
         output_render_elements.extend(
             space
