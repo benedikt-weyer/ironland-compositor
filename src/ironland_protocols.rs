@@ -77,3 +77,16 @@ pub mod permission_prompt {
 
     wayland_scanner::generate_server_code!("./protocols/ironland-permission-prompt-v1.xml");
 }
+
+pub mod capture_permissions {
+    use wayland_server;
+    use wayland_server::protocol::*;
+
+    pub mod __interfaces {
+        use wayland_server::protocol::__interfaces::*;
+        wayland_scanner::generate_interfaces!("./protocols/ironland-capture-permissions-v1.xml");
+    }
+    use self::__interfaces::*;
+
+    wayland_scanner::generate_server_code!("./protocols/ironland-capture-permissions-v1.xml");
+}

@@ -228,10 +228,12 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     /// `crate::screencopy`.
     pub screencopy: crate::screencopy::ScreencopyState,
     pub permission_prompt: crate::permission_prompt::PermissionPromptManagerState,
+    pub capture_permissions: crate::capture_permissions::CapturePermissionsState,
     /// Name of the second, privileged Wayland socket that gates
-    /// `ext-image-capture-source-v1`/`ext-image-copy-capture-v1` and
-    /// `ironland-permission-prompt-v1` (see `crate::screencopy`'s module
-    /// doc). `None` if `AnvilState::init` couldn't open it.
+    /// `ironland-permission-prompt-v1` and `ironland-capture-permissions-
+    /// v1` (see `crate::screencopy`'s module doc - screen capture itself
+    /// is *not* gated by this socket). `None` if `AnvilState::init`
+    /// couldn't open it.
     pub capture_socket_name: Option<String>,
 
     pub dnd_icon: Option<DndIcon>,
@@ -852,7 +854,29 @@ impl<BackendData: Backend> crate::permission_prompt::PermissionPromptHandler for
     }
 
     fn capture_grant_resolved(&mut self, subject: String, allowed: bool) {
-        self.screencopy.set_grant(subject, allowed);
+        use crate::capture_permissions::CapturePermissionsHandler;
+        self.set_capture_grant(subject, allowed);
+    }
+}
+
+impl<BackendData: Backend> crate::capture_permissions::CapturePermissionsHandler for AnvilState<BackendData> {
+    fn capture_permissions_state(&mut self) -> &mut crate::capture_permissions::CapturePermissionsState {
+        &mut self.capture_permissions
+    }
+
+    fn capture_grants(&self) -> Vec<(String, bool)> {
+        self.screencopy.grants_snapshot()
+    }
+
+    fn set_capture_grant(&mut self, subject: String, allowed: bool) {
+        self.screencopy.set_grant(subject.clone(), allowed);
+        crate::capture_permissions::sync_entry(self, &subject, allowed);
+    }
+
+    fn forget_capture_grant(&mut self, subject: &str) {
+        if self.screencopy.forget_grant(subject) {
+            crate::capture_permissions::sync_removed(self, subject);
+        }
     }
 }
 
@@ -1008,6 +1032,11 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             &dh,
             capture_privileged,
         );
+        // Same gate as `permission_prompt` above, and for the same reason:
+        // this exposes and edits *who's* allowed to capture the screen, so
+        // it's no less sensitive than the prompt itself.
+        let capture_permissions =
+            crate::capture_permissions::CapturePermissionsState::new::<Self, _>(&dh, capture_privileged);
 
         // init input
         let seat_name = backend_data.seat_name();
@@ -1062,6 +1091,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             image_copy_capture_state,
             screencopy: crate::screencopy::ScreencopyState::default(),
             permission_prompt,
+            capture_permissions,
             capture_socket_name,
             dnd_icon: None,
             suppressed_keys: Vec::new(),

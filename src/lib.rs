@@ -24,6 +24,7 @@ pub mod font;
 pub mod foreign_toplevel;
 pub mod input_handler;
 pub mod ironland_protocols;
+pub mod capture_permissions;
 pub mod launcher;
 #[cfg(feature = "libei")]
 pub mod libei;
