@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="ironland_permission_prompt_v1">
+  <copyright>
+    Copyright © 2026 the ironland-compositor contributors
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the
+    "Software"), to deal in the Software without restriction, including
+    without limitation the rights to use, copy, modify, merge, publish,
+    distribute, sublicense, and/or sell copies of the Software, and to
+    permit persons to whom the Software is furnished to do so, subject to
+    the following conditions:
+
+    The above copyright notice and this permission notice shall be included
+    in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+    IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+    TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+    SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="a compositor-drawn allow/deny prompt for privileged requests">
+    Lets a privileged, compositor-trusted client (in practice, this
+    compositor's own xdg-desktop-portal backends) ask the compositor to show
+    a full-screen "app X wants to do Y" prompt and report back the user's
+    Enter/Escape answer.
+
+    This is deliberately not exposed to ordinary clients: the manager global
+    is only advertised to clients connected through the compositor's
+    privileged capture socket (see `crate::screencopy`), the same channel
+    used for `ext-image-capture-source-v1`/`ext-image-copy-capture-v1`. A
+    prompt only ever names an `app_id` and a human-readable reason chosen by
+    the trusted caller, never anything the prompted-about app itself can
+    influence directly.
+  </description>
+
+  <interface name="ironland_permission_prompt_manager_v1" version="1">
+    <description summary="manager for permission prompt objects">
+      This interface allows a privileged client to ask the compositor to
+      show a permission prompt.
+    </description>
+
+    <request name="prompt">
+      <description summary="show a permission prompt">
+        Queues a prompt for display. If another prompt is already showing,
+        this one waits its turn. Exactly one of `allowed`/`denied` is sent
+        once the user answers.
+      </description>
+      <arg name="id" type="new_id" interface="ironland_permission_prompt_v1"/>
+      <arg name="app_id" type="string" summary="requesting application id, shown to the user"/>
+      <arg name="reason" type="string" summary="human-readable description of what's being requested"/>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Destroying the manager doesn't affect prompts already created
+        through it.
+      </description>
+    </request>
+  </interface>
+
+  <interface name="ironland_permission_prompt_v1" version="1">
+    <description summary="a queued or showing permission prompt">
+      See `ironland_permission_prompt_manager_v1.prompt`.
+    </description>
+
+    <event name="allowed">
+      <description summary="the user allowed the request">
+        Sent at most once, when the user answers Enter/Y while this prompt
+        is the one showing.
+      </description>
+    </event>
+
+    <event name="denied">
+      <description summary="the user denied the request, or the prompt was cancelled">
+        Sent at most once, when the user answers Escape/N while this prompt
+        is showing, or when the prompt is destroyed by the compositor before
+        being answered (e.g. session teardown).
+      </description>
+    </event>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the prompt">
+        If not yet answered, this cancels it (dismissing it from the queue,
+        or from the screen if it was showing) with no event sent.
+      </description>
+    </request>
+  </interface>
+</protocol>

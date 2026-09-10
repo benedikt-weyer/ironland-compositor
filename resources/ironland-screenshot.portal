@@ -1,0 +1,4 @@
+[portal]
+DBusName=org.freedesktop.impl.portal.desktop.ironland.screenshot
+Interfaces=org.freedesktop.impl.portal.Screenshot;
+UseIn=ironland-compositor

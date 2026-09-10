@@ -87,7 +87,8 @@ use smithay::{
         wayland_server::{Display, DisplayHandle, backend::GlobalId, protocol::wl_surface},
     },
     utils::{
-        DeviceFd, IsAlive, Logical, Monotonic, Point, Rectangle, Scale, Size, Time, Transform,
+        DeviceFd, IsAlive, Logical, Monotonic, Physical, Point, Rectangle, Scale, Size, Time,
+        Transform,
     },
     wayland::{
         compositor,
@@ -1717,6 +1718,12 @@ impl AnvilState<UdevData> {
 
         self.pre_repaint(&output, frame_target);
 
+        // Completed (or failed) from the frame this call renders - see
+        // `capture_udev_frame`, called from the free `render_surface` below
+        // once it has something to read pixels back from.
+        let pending_captures = self.screencopy.take_pending(&output);
+        let presented: Duration = frame_target.into();
+
         let focused_window_rect = crate::shell::tiling::current_focused_window(self)
             .and_then(|w| self.space.element_bbox(&w));
         let drop_indicator = self.tiling_drop_indicator;
@@ -1795,6 +1802,7 @@ impl AnvilState<UdevData> {
             &mut self.cursor_status,
             self.show_window_preview,
             &mut self.launcher,
+            &mut self.permission_prompt,
             workspace_overlay_shown.is_some(),
             &mut self.wallpaper,
             &self.config.blur,
@@ -1802,6 +1810,8 @@ impl AnvilState<UdevData> {
             focused_window_rect,
             &self.config.border,
             drop_indicator,
+            pending_captures,
+            presented,
         );
         let reschedule = match result {
             Ok((has_rendered, states)) => {
@@ -1886,6 +1896,7 @@ fn render_surface<'a>(
     cursor_status: &mut CursorImageStatus,
     show_window_preview: bool,
     launcher: &mut LauncherState,
+    permission_prompt: &mut crate::permission_prompt::PermissionPromptManagerState,
     show_workspace_overlay: bool,
     wallpaper: &mut crate::wallpaper::Wallpaper,
     blur: &crate::config::BlurSettings,
@@ -1893,6 +1904,8 @@ fn render_surface<'a>(
     focused_window_rect: Option<Rectangle<i32, Logical>>,
     border: &crate::config::BorderSettings,
     drop_indicator: Option<Rectangle<i32, Logical>>,
+    pending_captures: Vec<smithay::wayland::image_copy_capture::Frame>,
+    presented: Duration,
 ) -> Result<(bool, RenderElementStates), SwapBuffersError> {
     let output_geometry = space.output_geometry(output).unwrap();
     let scale = Scale::from(output.current_scale().fractional_scale());
@@ -1995,6 +2008,24 @@ fn render_surface<'a>(
         }
     }
 
+    let prompt_size = permission_prompt.logical_size();
+    if let Some(prompt_buffer) = permission_prompt.ensure_buffer() {
+        let location = Point::<i32, Logical>::from(((output_geometry.size.w - prompt_size.w) / 2, 24))
+            .to_f64()
+            .to_physical(scale);
+        if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
+            renderer,
+            location,
+            prompt_buffer,
+            None,
+            None,
+            None,
+            Kind::Unspecified,
+        ) {
+            custom_elements.push(CustomRenderElements::Overlay(element));
+        }
+    }
+
     if show_workspace_overlay {
         let (active, count) = crate::shell::workspace::overlay_info(output);
         let overlay_buffer = crate::drawing::workspace_overlay_buffer(active, count);
@@ -2056,16 +2087,9 @@ fn render_surface<'a>(
     } else {
         FrameFlags::DEFAULT
     };
-    let (rendered, states) = surface
+    let render_frame_result = surface
         .drm_output
         .render_frame(renderer, &elements, clear_color, frame_mode)
-        .map(|render_frame_result| {
-            #[cfg(feature = "renderer_sync")]
-            if let PrimaryPlaneElement::Swapchain(element) = render_frame_result.primary_element {
-                element.sync.wait();
-            }
-            (!render_frame_result.is_empty, render_frame_result.states)
-        })
         .map_err(|err| match err {
             smithay::backend::drm::compositor::RenderFrameError::PrepareFrame(err) => {
                 SwapBuffersError::from(err)
@@ -2075,6 +2099,26 @@ fn render_surface<'a>(
             ) => SwapBuffersError::from(err),
             _ => unreachable!(),
         })?;
+
+    #[cfg(feature = "renderer_sync")]
+    if let PrimaryPlaneElement::Swapchain(element) = render_frame_result.primary_element {
+        element.sync.wait();
+    }
+
+    if !pending_captures.is_empty() {
+        if render_frame_result.is_empty {
+            // Nothing changed since the last frame, so there's nothing new
+            // to read back - complete the request from whatever's already
+            // on screen instead of waiting on damage that may never come.
+            for frame in pending_captures {
+                frame.fail(smithay::wayland::image_copy_capture::CaptureFailureReason::Unknown);
+            }
+        } else {
+            capture_udev_frame(&render_frame_result, renderer, output, pending_captures, presented);
+        }
+    }
+
+    let (rendered, states) = (!render_frame_result.is_empty, render_frame_result.states);
 
     update_primary_scanout_output(space, output, dnd_icon, cursor_status, &states);
 
@@ -2087,4 +2131,79 @@ fn render_surface<'a>(
     }
 
     Ok((rendered, states))
+}
+
+/// Completes `pending` by reading back the frame `render_frame_result`
+/// (from `surface.drm_output.render_frame`, called immediately before this)
+/// just produced.
+///
+/// The DRM/KMS compositor may have scanned a client's buffer out directly
+/// (direct scanout) rather than compositing into a readable framebuffer, so
+/// there isn't always one to read pixels back from directly - instead this
+/// composites the same result again into an offscreen renderbuffer via
+/// [`RenderFrameResult::blit_frame_result`] (blitting the direct-scanout
+/// plane's dmabuf in, same as every other composited element), then reads
+/// that back the same way `crate::screencopy::fulfill` does for the winit
+/// backend.
+fn capture_udev_frame<'a, B, F, E>(
+    render_frame_result: &smithay::backend::drm::compositor::RenderFrameResult<'_, B, F, E>,
+    renderer: &mut UdevRenderer<'a>,
+    output: &Output,
+    pending: Vec<smithay::wayland::image_copy_capture::Frame>,
+    presented: Duration,
+) where
+    B: smithay::backend::allocator::Buffer + smithay::backend::allocator::dmabuf::AsDmabuf,
+    <B as smithay::backend::allocator::dmabuf::AsDmabuf>::Error: std::fmt::Debug,
+    F: smithay::backend::drm::Framebuffer,
+    E: smithay::backend::renderer::element::Element + smithay::backend::renderer::element::RenderElement<UdevRenderer<'a>>,
+{
+    use smithay::backend::renderer::gles::GlesRenderbuffer;
+    use smithay::backend::renderer::{Bind, Offscreen};
+    use smithay::wayland::image_copy_capture::CaptureFailureReason;
+
+    fn fail_all(pending: Vec<smithay::wayland::image_copy_capture::Frame>) {
+        for frame in pending {
+            frame.fail(CaptureFailureReason::Unknown);
+        }
+    }
+
+    let Some(size) = crate::screencopy::output_buffer_size(output) else {
+        fail_all(pending);
+        return;
+    };
+
+    let mut offscreen: GlesRenderbuffer = match renderer.create_buffer(Fourcc::Argb8888, size) {
+        Ok(buffer) => buffer,
+        Err(err) => {
+            tracing::warn!(?err, "screencopy: failed to allocate offscreen capture buffer");
+            fail_all(pending);
+            return;
+        }
+    };
+    let mut fb = match renderer.bind(&mut offscreen) {
+        Ok(fb) => fb,
+        Err(err) => {
+            tracing::warn!(?err, "screencopy: failed to bind offscreen capture buffer");
+            fail_all(pending);
+            return;
+        }
+    };
+
+    let physical_size: Size<i32, Physical> = (size.w, size.h).into();
+    let damage = Rectangle::from_size(physical_size);
+    if let Err(err) = render_frame_result.blit_frame_result(
+        physical_size,
+        output.current_transform(),
+        output.current_scale().fractional_scale(),
+        renderer,
+        &mut fb,
+        [damage],
+        [],
+    ) {
+        tracing::warn!(?err, "screencopy: failed to composite frame for capture");
+        fail_all(pending);
+        return;
+    }
+
+    crate::screencopy::fulfill(pending, renderer, &fb, size, presented);
 }

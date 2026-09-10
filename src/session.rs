@@ -28,13 +28,23 @@ pub fn announce_session_start(socket_name: Option<&str>) {
         std::env::set_var("XDG_SESSION_TYPE", "wayland");
     }
 
-    const VARS: &[&str] = &["WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE"];
+    // `IRONLAND_CAPTURE_SOCKET` (set by `AnvilState::init` itself, before
+    // this runs) needs the same D-Bus-activation-environment treatment as
+    // `WAYLAND_DISPLAY`: it's how `ironland-portal-screenshot` (D-Bus
+    // activated, so it inherits systemd/dbus's captured environment rather
+    // than this process's own) finds the privileged capture socket. See
+    // `crate::screencopy`'s module doc.
+    let mut vars: Vec<&str> = vec!["WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE"];
+    if std::env::var_os("IRONLAND_CAPTURE_SOCKET").is_some() {
+        vars.push("IRONLAND_CAPTURE_SOCKET");
+    }
+    let vars: &[&str] = &vars;
 
     run("systemctl", |cmd| {
-        cmd.arg("--user").arg("import-environment").args(VARS);
+        cmd.arg("--user").arg("import-environment").args(vars);
     });
     run("dbus-update-activation-environment", |cmd| {
-        cmd.arg("--systemd").args(VARS);
+        cmd.arg("--systemd").args(vars);
     });
     // `graphical-session.target` itself refuses manual starts (it's meant to
     // be pulled in as a dependency, normally by a display manager's login

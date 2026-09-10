@@ -27,8 +27,10 @@ pub mod ironland_protocols;
 pub mod launcher;
 #[cfg(feature = "libei")]
 pub mod libei;
+pub mod permission_prompt;
 pub mod render;
 pub mod rounded_corners;
+pub mod screencopy;
 #[cfg(feature = "udev")]
 pub mod session;
 pub mod shell;

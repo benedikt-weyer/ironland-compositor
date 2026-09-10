@@ -374,6 +374,28 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                         data.super_tap_pending = Some(false);
                     }
 
+                    // While a screen-capture permission prompt (see
+                    // `crate::permission_prompt`) is showing it grabs the
+                    // whole keyboard, same as the launcher below: every key
+                    // is consumed, Enter/Escape answer it.
+                    if data.permission_prompt.is_visible() {
+                        if let KeyState::Pressed = state {
+                            match keysym {
+                                Keysym::Return | Keysym::KP_Enter => {
+                                    data.permission_prompt.answer(true);
+                                }
+                                Keysym::Escape => {
+                                    data.permission_prompt.answer(false);
+                                }
+                                _ => {}
+                            }
+                            suppressed_keys.push(keysym);
+                        } else {
+                            suppressed_keys.retain(|k| *k != keysym);
+                        }
+                        return FilterResult::Intercept(KeyAction::None);
+                    }
+
                     // While the launcher overlay is open it grabs the whole keyboard:
                     // every key is consumed here instead of being forwarded to the
                     // focused client, whether or not it maps to a launcher action.

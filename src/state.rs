@@ -134,6 +134,12 @@ use smithay::{
 pub struct ClientState {
     pub compositor_state: CompositorClientState,
     pub security_context: Option<SecurityContext>,
+    /// Whether this client connected through the privileged capture socket
+    /// (see `AnvilState::init`'s `capture_socket_name`), and so may bind
+    /// the `ext-image-capture-source-v1`/`ext-image-copy-capture-v1`
+    /// manager globals - see `crate::screencopy`'s module doc for why this
+    /// gate exists and who it ends up admitting in practice.
+    pub capture_privileged: bool,
 }
 impl ClientData for ClientState {
     /// Notification that a client was initialized
@@ -184,6 +190,15 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     pub image_capture_source_state: ImageCaptureSourceState,
     pub output_capture_source_state: OutputCaptureSourceState,
     pub image_copy_capture_state: ImageCopyCaptureState,
+    /// Sessions/pending frames for the image-copy-capture pipeline; see
+    /// `crate::screencopy`.
+    pub screencopy: crate::screencopy::ScreencopyState,
+    pub permission_prompt: crate::permission_prompt::PermissionPromptManagerState,
+    /// Name of the second, privileged Wayland socket that gates
+    /// `ext-image-capture-source-v1`/`ext-image-copy-capture-v1` and
+    /// `ironland-permission-prompt-v1` (see `crate::screencopy`'s module
+    /// doc). `None` if `AnvilState::init` couldn't open it.
+    pub capture_socket_name: Option<String>,
 
     pub dnd_icon: Option<DndIcon>,
 
@@ -745,13 +760,35 @@ impl<BackendData: Backend> ImageCopyCaptureHandler for AnvilState<BackendData> {
         })
     }
 
-    fn new_session(&mut self, _session: Session) {
-        // Anvil doesn't track sessions; they clean up on drop
+    fn new_session(&mut self, session: Session) {
+        self.screencopy.sessions.push(session);
     }
 
-    fn frame(&mut self, _session: &SessionRef, frame: Frame) {
-        // Anvil doesn't implement actual capture
-        frame.fail(smithay::wayland::image_copy_capture::CaptureFailureReason::Unknown);
+    fn frame(&mut self, session: &SessionRef, frame: Frame) {
+        use smithay::output::WeakOutput;
+        let Some(output) = session
+            .source()
+            .user_data()
+            .get::<WeakOutput>()
+            .and_then(WeakOutput::upgrade)
+        else {
+            frame.fail(smithay::wayland::image_copy_capture::CaptureFailureReason::Unknown);
+            return;
+        };
+        // Completed by the next successful render of `output` - see
+        // `crate::screencopy::fulfill`, called from each backend's render
+        // loop once the frame it just drew is still readable.
+        self.screencopy.queue_frame(output.name(), frame);
+    }
+
+    fn session_destroyed(&mut self, session: SessionRef) {
+        self.screencopy.forget_session(&session);
+    }
+}
+
+impl<BackendData: Backend> crate::permission_prompt::PermissionPromptHandler for AnvilState<BackendData> {
+    fn permission_prompt_state(&mut self) -> &mut crate::permission_prompt::PermissionPromptManagerState {
+        &mut self.permission_prompt
     }
 }
 
@@ -791,6 +828,42 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         } else {
             None
         };
+
+        // A second, privileged socket for screen-capture clients only (see
+        // `crate::screencopy`'s module doc): every client connected through
+        // it is flagged `capture_privileged`, the only clients the
+        // `ext-image-capture-source-v1`/`ext-image-copy-capture-v1`/
+        // `ironland-permission-prompt-v1` globals below are advertised to.
+        // In practice the sole such client is this compositor's own
+        // `ironland-portal-screenshot` binary. Opened even when
+        // `!listen_on_socket` (nested inside another session's own socket
+        // handling) so the same gating works there too during development.
+        let capture_socket_name = ListeningSocketSource::new_auto().ok().map(|source| {
+            let name = source.socket_name().to_string_lossy().into_owned();
+            handle
+                .insert_source(source, |client_stream, _, data| {
+                    let client_state = ClientState {
+                        capture_privileged: true,
+                        ..ClientState::default()
+                    };
+                    if let Err(err) = data
+                        .display_handle
+                        .insert_client(client_stream, Arc::new(client_state))
+                    {
+                        warn!("Error adding capture wayland socket client: {}", err);
+                    };
+                })
+                .expect("Failed to init capture wayland socket source");
+            info!(name = name, "Listening on privileged capture wayland socket");
+            name
+        });
+        // Safety: single-threaded at this point in startup.
+        if let Some(name) = capture_socket_name.as_deref() {
+            unsafe {
+                std::env::set_var("IRONLAND_CAPTURE_SOCKET", name);
+            }
+        }
+
         handle
             .insert_source(
                 Generic::new(display, Interest::READ, Mode::Level),
@@ -850,10 +923,23 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         });
         FixesState::new::<Self>(&dh);
 
-        // Image capture protocols (screencopy)
+        // Image capture protocols (screencopy) - gated to clients connected
+        // through the privileged capture socket set up above; see
+        // `crate::screencopy`'s module doc.
+        let capture_privileged = |client: &Client| {
+            client
+                .get_data::<ClientState>()
+                .is_some_and(|c| c.capture_privileged)
+        };
         let image_capture_source_state = ImageCaptureSourceState::new();
-        let output_capture_source_state = OutputCaptureSourceState::new::<Self>(&dh);
-        let image_copy_capture_state = ImageCopyCaptureState::new::<Self>(&dh);
+        let output_capture_source_state =
+            OutputCaptureSourceState::new_with_filter::<Self, _>(&dh, capture_privileged);
+        let image_copy_capture_state =
+            ImageCopyCaptureState::new_with_filter::<Self, _>(&dh, capture_privileged);
+        let permission_prompt = crate::permission_prompt::PermissionPromptManagerState::new::<Self, _>(
+            &dh,
+            capture_privileged,
+        );
 
         // init input
         let seat_name = backend_data.seat_name();
@@ -906,6 +992,9 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             image_capture_source_state,
             output_capture_source_state,
             image_copy_capture_state,
+            screencopy: crate::screencopy::ScreencopyState::default(),
+            permission_prompt,
+            capture_socket_name,
             dnd_icon: None,
             suppressed_keys: Vec::new(),
             held_shortcut_keys: HashMap::new(),

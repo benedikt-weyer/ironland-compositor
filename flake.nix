@@ -88,12 +88,15 @@
           # binary itself needs Xwayland on its PATH instead.
           #
           # Also installs the `org.freedesktop.impl.portal.GlobalShortcuts`
-          # backend's D-Bus activation + xdg-desktop-portal registration
-          # files (see `src/bin/ironland_portal_global_shortcuts.rs`).
-          # `resources/ironland.portal` has no store paths in it so it's
-          # installed as-is; the `.service` file's `Exec=` needs this
-          # derivation's own `$out`, so it's generated here instead of
-          # checked in statically.
+          # and `org.freedesktop.impl.portal.Screenshot` backends' D-Bus
+          # activation + xdg-desktop-portal registration files (see
+          # `src/bin/ironland_portal_global_shortcuts.rs` and
+          # `src/bin/ironland_portal_screenshot.rs`) - two separate bus
+          # names/`.portal` files, since two processes can't own the same
+          # bus name. Both `resources/*.portal` files have no store paths
+          # in them so they're installed as-is; the `.service` files'
+          # `Exec=` needs this derivation's own `$out`, so they're
+          # generated here instead of checked in statically.
           postFixup = ''
             wrapProgram $out/bin/ironland-compositor --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xwayland ]}
             # `ironlandctl outputs detect` shells out to `wayland-info` by
@@ -109,6 +112,15 @@
             [D-BUS Service]
             Name=org.freedesktop.impl.portal.desktop.ironland
             Exec=$out/bin/ironland-portal-global-shortcuts
+            EOF
+
+            install -Dm444 resources/ironland-screenshot.portal \
+              $out/share/xdg-desktop-portal/portals/ironland-screenshot.portal
+            install -Dm444 /dev/stdin \
+              $out/share/dbus-1/services/org.freedesktop.impl.portal.desktop.ironland.screenshot.service <<EOF
+            [D-BUS Service]
+            Name=org.freedesktop.impl.portal.desktop.ironland.screenshot
+            Exec=$out/bin/ironland-portal-screenshot
             EOF
 
             # `ironlandctl` (see `ironlandctl/`) generates its own completion

@@ -317,6 +317,15 @@ pub fn run_winit() {
                 .to_physical(scale)
             });
 
+            let permission_prompt_buffer = state.permission_prompt.ensure_buffer().cloned();
+            let permission_prompt_location = permission_prompt_buffer.as_ref().map(|_| {
+                let output_size = state.space.output_geometry(&output).unwrap().size;
+                let prompt_size = state.permission_prompt.logical_size();
+                Point::<i32, Logical>::from(((output_size.w - prompt_size.w) / 2, 24))
+                    .to_f64()
+                    .to_physical(scale)
+            });
+
             let workspace_overlay = state.workspace_overlay_shown.filter(|shown_at| {
                 shown_at.elapsed().as_millis()
                     < crate::shell::workspace::OVERLAY_DURATION_MS as u128
@@ -387,6 +396,15 @@ pub fn run_winit() {
                 radius: state.config.corners.radius as f32,
             });
 
+            // Taken up-front (rather than through `state` inside the render
+            // closure below, which already has `state.backend_data`
+            // mutably borrowed as `backend`) - completed from the
+            // just-rendered framebuffer right after `render_output`
+            // succeeds, while it's still bound. See `crate::screencopy`.
+            let pending_captures = state.screencopy.take_pending(&output);
+            let capture_size = crate::screencopy::output_buffer_size(&output);
+            let presented: Duration = frame_target.into();
+
             let render_res = backend.bind().and_then(|(renderer, mut fb)| {
                 #[cfg(feature = "debug")]
                 if let Some(renderdoc) = renderdoc.as_mut() {
@@ -456,6 +474,22 @@ pub fn run_winit() {
                     }
                 }
 
+                if let (Some(prompt_buffer), Some(location)) =
+                    (&permission_prompt_buffer, permission_prompt_location)
+                {
+                    if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
+                        renderer,
+                        location,
+                        prompt_buffer,
+                        None,
+                        None,
+                        None,
+                        Kind::Unspecified,
+                    ) {
+                        elements.push(CustomRenderElements::Overlay(element));
+                    }
+                }
+
                 if let Some((buffer, location)) = &workspace_overlay_buffer_and_location {
                     if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
                         renderer,
@@ -486,6 +520,24 @@ pub fn run_winit() {
                     corner_radius,
                     drop_indicator,
                 )
+                .map(|result| {
+                    if let Some(size) = capture_size {
+                        crate::screencopy::fulfill(
+                            pending_captures,
+                            renderer,
+                            &fb,
+                            size,
+                            presented,
+                        );
+                    } else {
+                        for frame in pending_captures {
+                            frame.fail(
+                                smithay::wayland::image_copy_capture::CaptureFailureReason::Unknown,
+                            );
+                        }
+                    }
+                    result
+                })
                 .map_err(|err| match err {
                     OutputDamageTrackerError::Rendering(err) => err.into(),
                     _ => unreachable!(),

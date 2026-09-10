@@ -37,6 +37,15 @@ path = "src/bin/ironland_workspaces.rs"
 name = "ironland-portal-global-shortcuts"
 path = "src/bin/ironland_portal_global_shortcuts.rs"
 
+# The `org.freedesktop.impl.portal.Screenshot` backend for
+# xdg-desktop-portal: captures a frame via `ext-image-capture-source-v1`/
+# `ext-image-copy-capture-v1` (protocol version 1) over the compositor's
+# privileged capture socket (see `crate::screencopy`), gated by a
+# per-app_id permission prompt/grant store. See its own module doc.
+[[bin]]
+name = "ironland-portal-screenshot"
+path = "src/bin/ironland_portal_screenshot.rs"
+
 [dependencies]
 ironland-config = { path = "ironland-config" }
 zbus = "4"
