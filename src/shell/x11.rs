@@ -3,9 +3,12 @@
 //! clipboard/primary selection, the same way `shell/xdg.rs` does for native
 //! Wayland toplevels.
 //!
-//! X11 windows never enter the tiling tree (`tiling::should_tile` already
-//! returns `false` for them, since they have no xdg toplevel): they're
-//! placed and tracked as floating windows via [`place_new_window`] and
+//! X11 windows participate in tiling the same way native toplevels do
+//! (`tiling::should_tile_x11` is `should_tile`'s X11 counterpart, driven by
+//! the window's transient-for/window-type/size hints instead of an xdg
+//! toplevel's parent/min-max size, since X11 windows have neither); ones
+//! that opt out (dialogs, utility/menu/splash windows, fixed-size windows)
+//! are placed and tracked as floating via [`place_new_window`] and
 //! [`super::workspace::assign_new_window`], same as an xdg dialog.
 
 use std::{cell::RefCell, os::unix::io::OwnedFd};
@@ -40,7 +43,7 @@ use crate::{AnvilState, focus::KeyboardFocusTarget, state::Backend};
 
 use super::{
     FullscreenSurface, PointerMoveSurfaceGrab, PointerResizeSurfaceGrab, ResizeData, ResizeState,
-    SurfaceData, TouchMoveSurfaceGrab, WindowElement, place_new_window, workspace,
+    SurfaceData, TouchMoveSurfaceGrab, WindowElement, place_new_window, tiling, workspace,
 };
 
 #[derive(Debug, Default)]
@@ -71,8 +74,11 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
 
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
         window.set_mapped(true).unwrap();
+        let should_tile = tiling::should_tile_x11(&window);
         let window = WindowElement(Window::new_x11_window(window));
-        if let Some(output) = place_new_window(&mut self.space, self.pointer.current_location(), &window, true) {
+        if should_tile {
+            tiling::tile_new_window(self, &window, self.pointer.current_location());
+        } else if let Some(output) = place_new_window(&mut self.space, self.pointer.current_location(), &window, true) {
             workspace::assign_new_window(&window, &output, true);
         }
         let bbox = self.space.element_bbox(&window).unwrap();
@@ -80,7 +86,14 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
             unreachable!()
         };
         xsurface.configure(Some(bbox)).unwrap();
-        window.set_ssd(!xsurface.is_decorated());
+        // `top_bar` is the user's global switch for the compositor-drawn
+        // window header bar - same gating as the xdg-decoration path in
+        // `state.rs`'s `XdgDecorationHandler::request_mode`. X11 windows
+        // have no xdg-decoration negotiation, so this has to be applied
+        // here instead, using the window's own motif decoration hint only
+        // to decide whether it *wants* SSD, not whether it's allowed to
+        // have it.
+        window.set_ssd(self.config.top_bar && !xsurface.is_decorated());
         crate::foreign_toplevel::sync(self);
     }
 
@@ -216,7 +229,7 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
             .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
         {
             window.set_fullscreen(false).unwrap();
-            elem.set_ssd(!window.is_decorated());
+            elem.set_ssd(self.config.top_bar && !window.is_decorated());
             if let Some(output) = self.space.outputs().find(|o| {
                 o.user_data()
                     .get::<FullscreenSurface>()

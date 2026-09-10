@@ -524,12 +524,16 @@ fn assigned_tile_rect<BackendData: Backend>(
 
 fn window_min_size(window: &WindowElement) -> smithay::utils::Size<i32, Logical> {
     #[allow(irrefutable_let_patterns)]
-    let Some(toplevel) = window.0.toplevel() else {
-        return (0, 0).into();
-    };
-    with_states(toplevel.wl_surface(), |states| {
-        states.cached_state.get::<SurfaceCachedState>().current().min_size
-    })
+    if let Some(toplevel) = window.0.toplevel() {
+        return with_states(toplevel.wl_surface(), |states| {
+            states.cached_state.get::<SurfaceCachedState>().current().min_size
+        });
+    }
+    #[cfg(feature = "xwayland")]
+    if let Some(xsurface) = window.0.x11_surface() {
+        return xsurface.min_size().unwrap_or_default();
+    }
+    (0, 0).into()
 }
 
 /// Centers `window` (assumed already mapped, e.g. just untiled) on `output`,
@@ -639,6 +643,10 @@ pub fn apply_layout<BackendData: Backend>(state: &mut AnvilState<BackendData>, o
                     toplevel.send_pending_configure();
                 }
             }
+            #[cfg(feature = "xwayland")]
+            if let Some(xsurface) = window.0.x11_surface() {
+                let _ = xsurface.configure(Some(rect));
+            }
         }
         state.space.map_element(window, rect.loc, false);
     }
@@ -660,6 +668,28 @@ pub fn should_tile(window: &WindowElement) -> bool {
         (state.min_size, state.max_size)
     });
     let fixed_size = min.w > 0 && min.h > 0 && min == max;
+    !fixed_size
+}
+
+/// [`should_tile`]'s X11 counterpart: XWayland windows have no xdg toplevel,
+/// so the parent/transient-for relationship, fixed-size hint and window
+/// type live on the `X11Surface` instead. Dialogs, utility/menu/splash-type
+/// windows and fixed-size windows stay floating, same as their Wayland
+/// counterparts.
+#[cfg(feature = "xwayland")]
+pub fn should_tile_x11(xsurface: &smithay::xwayland::X11Surface) -> bool {
+    if xsurface.is_transient_for().is_some() {
+        return false;
+    }
+    if !matches!(
+        xsurface.window_type(),
+        None | Some(smithay::xwayland::xwm::WmWindowType::Normal)
+    ) {
+        return false;
+    }
+    let min = xsurface.min_size();
+    let max = xsurface.max_size();
+    let fixed_size = matches!((min, max), (Some(min), Some(max)) if min.w > 0 && min.h > 0 && min == max);
     !fixed_size
 }
 
