@@ -1905,6 +1905,8 @@ impl AnvilState<UdevData> {
                         }
                     }
                     self.record_frame_stats(&output, Instant::now(), capture_frame_index);
+                } else {
+                    self.record_skipped_frame(&output, Instant::now());
                 }
                 !has_rendered
             }

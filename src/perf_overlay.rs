@@ -2,7 +2,9 @@
 //! [`crate::config::PerformanceSettings`]). Both backends keep one
 //! [`FrameStats`] per output (see `AnvilState::perf_stats`), call
 //! [`FrameStats::record_frame`] once per successfully rendered/presented
-//! frame, and - when `performance.fps_overlay` is on - draw the buffer from
+//! frame and [`FrameStats::record_skip`] once per repaint attempt that found
+//! no damage instead, and - when `performance.fps_overlay` is on - draw the
+//! buffer from
 //! [`overlay_buffer`] the same way the launcher/workspace-switcher overlays
 //! are drawn (a [`MemoryRenderBuffer`] pushed as `CustomRenderElements::Overlay`).
 //!
@@ -47,6 +49,25 @@ pub struct FrameStats {
     stutter_count: u64,
     /// Timestamps of stutters within `RECENT_WINDOW`, oldest first.
     recent_stutters: VecDeque<Instant>,
+    /// Intervals between "skipped" render cycles - a vblank/repaint attempt
+    /// that found no damage (nothing changed) and so rendered nothing - fed
+    /// by [`Self::record_skip`]. Kept the same way `frame_times` is, so
+    /// [`Self::skipped_fps`] can use the same reciprocal-of-mean-interval
+    /// technique as [`Self::avg_fps`].
+    skip_times: VecDeque<Duration>,
+    last_skip_at: Option<Instant>,
+}
+
+/// Reciprocal of the mean of `durations`, or `0.0` if it's empty - shared by
+/// [`FrameStats::avg_fps`] and [`FrameStats::skipped_fps`], which differ only
+/// in which history they read.
+fn rate_from(durations: &VecDeque<Duration>) -> f64 {
+    if durations.is_empty() {
+        return 0.0;
+    }
+    let total: Duration = durations.iter().sum();
+    let mean = total.as_secs_f64() / durations.len() as f64;
+    if mean > 0.0 { 1.0 / mean } else { 0.0 }
 }
 
 /// Result of [`FrameStats::record_frame`]: `Some(frame_time)` if the just-
@@ -89,15 +110,48 @@ impl FrameStats {
         }
     }
 
-    /// Average FPS over the recorded history, or `0.0` before at least two
-    /// frames have been recorded.
-    pub fn avg_fps(&self) -> f64 {
-        if self.frame_times.is_empty() {
-            return 0.0;
+    /// Records a render cycle at `now` that found no damage and so rendered
+    /// (and presented) nothing - the counterpart to [`Self::record_frame`]
+    /// for the other outcome of a repaint attempt. Feeds [`Self::skipped_fps`]
+    /// the same way `record_frame` feeds [`Self::avg_fps`]; doesn't affect
+    /// stutter detection, which only concerns itself with frames that
+    /// actually rendered.
+    pub fn record_skip(&mut self, now: Instant) {
+        if let Some(prev) = self.last_skip_at.replace(now) {
+            let interval = now.saturating_duration_since(prev);
+            if self.skip_times.len() >= HISTORY_LEN {
+                self.skip_times.pop_front();
+            }
+            self.skip_times.push_back(interval);
         }
-        let total: Duration = self.frame_times.iter().sum();
-        let mean = total.as_secs_f64() / self.frame_times.len() as f64;
-        if mean > 0.0 { 1.0 / mean } else { 0.0 }
+    }
+
+    /// Average FPS ("rendered FPS") over the recorded history of actually-
+    /// rendered frames, or `0.0` before at least two have been recorded.
+    /// Excludes skipped (no-damage) cycles entirely - see [`Self::skipped_fps`]
+    /// for those.
+    pub fn avg_fps(&self) -> f64 {
+        rate_from(&self.frame_times)
+    }
+
+    /// Average rate of skipped (no-damage) render cycles ("skipped FPS"),
+    /// the same way [`Self::avg_fps`] averages actually-rendered ones.
+    /// `0.0` before at least two have been recorded, and settles back
+    /// towards `0.0` on its own as the desktop stays busy and skips stop
+    /// happening (old skip intervals age out of the same
+    /// [`HISTORY_LEN`]-sized window `avg_fps` uses).
+    pub fn skipped_fps(&self) -> f64 {
+        rate_from(&self.skip_times)
+    }
+
+    /// `avg_fps() + skipped_fps()` - an estimate of how often the render
+    /// loop is running in total (rendering or not), for the overlay's
+    /// headline number. An approximation, not an exact event count: each
+    /// half is its own independent reciprocal-of-mean-interval rate, so
+    /// this can drift from the true combined rate when rendering and
+    /// skipping interleave irregularly rather than at a steady cadence.
+    pub fn total_fps(&self) -> f64 {
+        self.avg_fps() + self.skipped_fps()
     }
 
     /// The most recently recorded frame's interval, in milliseconds.
@@ -185,7 +239,7 @@ fn line_height() -> i32 {
 /// Logical size of the overlay, so callers can position it without first
 /// rasterizing it (mirrors `drawing::workspace_overlay_size`).
 pub fn overlay_size() -> Size<i32, Logical> {
-    let lines = ["999 FPS", "999.9 MS", "STUTTERS 9999"];
+    let lines = ["999 FPS", "999.9 MS", "999 RFPS", "999 SFPS", "STUTTERS 9999"];
     let width = lines
         .iter()
         .map(|line| Canvas::text_width(line, FONT_SCALE))
@@ -196,14 +250,17 @@ pub fn overlay_size() -> Size<i32, Logical> {
     Size::from((width, height))
 }
 
-/// Rasterizes the current stats into a small semi-transparent panel: FPS,
-/// last frame time, and a stutter counter colored by how recently stutters
-/// have been happening (green/amber/red).
+/// Rasterizes the current stats into a small semi-transparent panel: total
+/// FPS (rendered + skipped - see [`FrameStats::total_fps`]), last frame
+/// time, the rendered/skipped breakdown, and a stutter counter colored by
+/// how recently stutters have been happening (green/amber/red).
 pub fn overlay_buffer(stats: &FrameStats) -> MemoryRenderBuffer {
     let size = overlay_size();
     let mut canvas = Canvas::new(size.w as usize, size.h as usize, COLOR_BACKGROUND);
 
-    let fps = stats.avg_fps().round() as i64;
+    let fps = stats.total_fps().round() as i64;
+    let rendered_fps = stats.avg_fps().round() as i64;
+    let skipped_fps = stats.skipped_fps().round() as i64;
     let frame_ms = stats.last_frame_ms();
     let color = severity_color(stats.recent_stutter_count());
 
@@ -214,6 +271,22 @@ pub fn overlay_buffer(stats: &FrameStats) -> MemoryRenderBuffer {
         PADDING,
         y,
         &format!("{frame_ms:.1} MS"),
+        FONT_SCALE,
+        COLOR_LABEL,
+    );
+    y += line_height();
+    canvas.draw_text(
+        PADDING,
+        y,
+        &format!("{rendered_fps} RFPS"),
+        FONT_SCALE,
+        COLOR_LABEL,
+    );
+    y += line_height();
+    canvas.draw_text(
+        PADDING,
+        y,
+        &format!("{skipped_fps} SFPS"),
         FONT_SCALE,
         COLOR_LABEL,
     );
@@ -299,6 +372,54 @@ mod tests {
         }
         let fps = stats.avg_fps();
         assert!((fps - 50.0).abs() < 0.5, "expected ~50fps, got {fps}");
+    }
+
+    #[test]
+    fn skipped_fps_matches_steady_interval() {
+        let mut stats = FrameStats::new();
+        let mut t = Instant::now();
+        for _ in 0..10 {
+            stats.record_skip(t);
+            t += Duration::from_millis(20);
+        }
+        let fps = stats.skipped_fps();
+        assert!((fps - 50.0).abs() < 0.5, "expected ~50fps, got {fps}");
+    }
+
+    #[test]
+    fn record_frame_does_not_affect_skipped_fps_and_vice_versa() {
+        let mut stats = FrameStats::new();
+        let mut t = Instant::now();
+        for _ in 0..10 {
+            stats.record_frame(t, Duration::from_millis(1000));
+            t += Duration::from_millis(20);
+        }
+        assert_eq!(stats.skipped_fps(), 0.0);
+
+        for _ in 0..10 {
+            stats.record_skip(t);
+            t += Duration::from_millis(20);
+        }
+        // Rendering stopped 200ms ago (10 skips at 20ms), but `avg_fps` only
+        // ever looks at rendered-frame intervals, so it's unaffected by the
+        // skips that happened since.
+        let rendered_fps = stats.avg_fps();
+        assert!((rendered_fps - 50.0).abs() < 0.5, "expected ~50fps, got {rendered_fps}");
+    }
+
+    #[test]
+    fn total_fps_is_rendered_plus_skipped() {
+        let mut stats = FrameStats::new();
+        let mut t = Instant::now();
+        for _ in 0..10 {
+            stats.record_frame(t, Duration::from_millis(1000));
+            t += Duration::from_millis(20);
+        }
+        for _ in 0..10 {
+            stats.record_skip(t);
+            t += Duration::from_millis(20);
+        }
+        assert_eq!(stats.total_fps(), stats.avg_fps() + stats.skipped_fps());
     }
 
     #[test]

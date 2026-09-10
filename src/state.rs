@@ -1215,6 +1215,17 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         }
     }
 
+    /// Records that `output` just had a repaint attempt at `now` that found
+    /// no damage (nothing changed) and so rendered nothing - the
+    /// [`record_frame_stats`](Self::record_frame_stats) counterpart for that
+    /// outcome, feeding the FPS overlay's "SFPS" (skipped) reading (see
+    /// `crate::perf_overlay::FrameStats::record_skip`). Both backends call
+    /// this from the same place they'd otherwise call `record_frame_stats`.
+    pub fn record_skipped_frame(&mut self, output: &Output, now: Instant) {
+        let stats = self.perf_stats.entry(output.name()).or_default();
+        stats.record_skip(now);
+    }
+
     /// Reloads and applies the effective config after it changes on disk.
     /// Invalid TOML is deliberately ignored so the currently running setup
     /// remains intact while the user fixes the file.

@@ -673,6 +673,8 @@ pub fn run_winit() {
                             0,
                             wp_presentation_feedback::Kind::Vsync,
                         )
+                    } else {
+                        state.record_skipped_frame(&output, Instant::now());
                     }
 
                     // Send frame events so that client start drawing their next frame
