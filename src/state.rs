@@ -202,6 +202,7 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     pub foreign_toplevel_manager_state: crate::foreign_toplevel::ForeignToplevelManagerState,
     pub shortcuts_manager_state: crate::shortcuts::ShortcutsManagerState,
     pub focus_grab_manager_state: crate::focus_grab::FocusGrabManagerState,
+    pub frame_capture_manager_state: crate::frame_capture::FrameCaptureManagerState,
     pub workspace_windows_state: crate::workspace_windows::WorkspaceWindowsState,
     pub output_manager_state: OutputManagerState,
     pub primary_selection_state: PrimarySelectionState,
@@ -276,6 +277,14 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     /// simply left in place if the output disappears (cheap, and avoids
     /// churn on the common case of a monitor being unplugged and replugged).
     pub perf_stats: HashMap<String, crate::perf_overlay::FrameStats>,
+
+    /// How long the most recent `dispatch_clients` call (the Wayland
+    /// display socket's calloop source, below) took - fed into
+    /// `crate::frame_capture`'s "dispatch_clients" stage by whichever
+    /// output renders next, since client dispatch isn't itself per-output.
+    /// Only ever measured while a capture session is open; `ZERO`
+    /// otherwise.
+    pub last_dispatch_duration: Duration,
 
     /// Persistent damage-tracking identity for the focus-highlight border
     /// and the tiling drag-and-drop indicator, keyed by output name (see
@@ -390,6 +399,12 @@ impl<BackendData: Backend> crate::shortcuts::ShortcutsHandler for AnvilState<Bac
 impl<BackendData: Backend> crate::focus_grab::FocusGrabHandler for AnvilState<BackendData> {
     fn focus_grab_state(&mut self) -> &mut crate::focus_grab::FocusGrabManagerState {
         &mut self.focus_grab_manager_state
+    }
+}
+
+impl<BackendData: Backend> crate::frame_capture::FrameCaptureHandler for AnvilState<BackendData> {
+    fn frame_capture_state(&mut self) -> &mut crate::frame_capture::FrameCaptureManagerState {
+        &mut self.frame_capture_manager_state
     }
 }
 
@@ -968,9 +983,16 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
                 Generic::new(display, Interest::READ, Mode::Level),
                 |_, display, data| {
                     profiling::scope!("dispatch_clients");
+                    // Timed only while a `crate::frame_capture` session is
+                    // open - see `last_dispatch_duration`'s own doc comment
+                    // for why this is where it's measured.
+                    let timed = crate::frame_capture::is_capturing(data).then(Instant::now);
                     // Safety: we don't drop the display
                     unsafe {
                         display.get_mut().dispatch_clients(data).unwrap();
+                    }
+                    if let Some(start) = timed {
+                        data.last_dispatch_duration = start.elapsed();
                     }
                     Ok(PostAction::Continue)
                 },
@@ -986,6 +1008,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             crate::foreign_toplevel::ForeignToplevelManagerState::new::<Self>(&dh);
         let shortcuts_manager_state = crate::shortcuts::ShortcutsManagerState::new::<Self>(&dh);
         let focus_grab_manager_state = crate::focus_grab::FocusGrabManagerState::new::<Self>(&dh);
+        let frame_capture_manager_state = crate::frame_capture::FrameCaptureManagerState::new::<Self>(&dh);
         let workspace_windows_state = crate::workspace_windows::WorkspaceWindowsState::new::<Self>(&dh);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
@@ -1085,6 +1108,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             foreign_toplevel_manager_state,
             shortcuts_manager_state,
             focus_grab_manager_state,
+            frame_capture_manager_state,
             workspace_windows_state,
             output_manager_state,
             primary_selection_state,
@@ -1132,6 +1156,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             wallpaper: crate::wallpaper::Wallpaper::load(config.wallpaper.as_deref()),
             workspace_overlay_shown: None,
             perf_stats: HashMap::new(),
+            last_dispatch_duration: Duration::ZERO,
             border_cache: HashMap::new(),
             drop_indicator_cache: HashMap::new(),
             tiling_drop_indicator: None,
@@ -1144,26 +1169,42 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
     }
 
     /// Records that `output` just rendered/presented a frame at `now`,
-    /// updating its [`crate::perf_overlay::FrameStats`] and logging a
+    /// updating its [`crate::perf_overlay::FrameStats`], logging a
     /// `tracing::warn!` if it counted as a stutter and
-    /// `config.performance.stutter_log` is on. Both backends call this once
-    /// per successfully rendered frame (see `udev.rs`/`winit.rs`), whether
-    /// or not the FPS overlay is currently shown, so the overlay's history
-    /// isn't empty the moment it's toggled on.
-    pub fn record_frame_stats(&mut self, output: &Output, now: Instant) {
+    /// `config.performance.stutter_log` is on, and - while a
+    /// `crate::frame_capture` session is open - reporting it as that
+    /// session's `frame_index`th frame on `output`. Both backends call this
+    /// once per successfully rendered frame (see `udev.rs`/`winit.rs`),
+    /// whether or not the FPS overlay is currently shown, so the overlay's
+    /// history isn't empty the moment it's toggled on.
+    pub fn record_frame_stats(&mut self, output: &Output, now: Instant, frame_index: u32) {
         let refresh_mhz = output.current_mode().map(|mode| mode.refresh);
         let threshold = crate::perf_overlay::stutter_threshold(&self.config.performance, refresh_mhz);
         let name = output.name();
         let stats = self.perf_stats.entry(name.clone()).or_default();
-        if let Some(frame_time) = stats.record_frame(now, threshold)
+        let stutter = stats.record_frame(now, threshold);
+        let stutter_count = stats.stutter_count();
+        let frame_time = Duration::from_secs_f64(stats.last_frame_ms() / 1000.0);
+        if let Some(frame_time) = stutter
             && self.config.performance.stutter_log
         {
             warn!(
                 output = %name,
                 frame_time_ms = frame_time.as_secs_f64() * 1000.0,
                 threshold_ms = threshold.as_secs_f64() * 1000.0,
-                total_stutters = stats.stutter_count(),
+                total_stutters = stutter_count,
                 "frame stutter detected"
+            );
+        }
+        if crate::frame_capture::is_capturing(self) {
+            let live_output_count = self.space.outputs().count();
+            crate::frame_capture::record_frame(
+                self,
+                &name,
+                frame_index,
+                frame_time,
+                stutter.is_some(),
+                live_output_count,
             );
         }
     }

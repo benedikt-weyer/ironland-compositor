@@ -90,3 +90,16 @@ pub mod capture_permissions {
 
     wayland_scanner::generate_server_code!("./protocols/ironland-capture-permissions-v1.xml");
 }
+
+pub mod frame_capture {
+    use wayland_server;
+    use wayland_server::protocol::*;
+
+    pub mod __interfaces {
+        use wayland_server::protocol::__interfaces::*;
+        wayland_scanner::generate_interfaces!("./protocols/ironland-frame-capture-v1.xml");
+    }
+    use self::__interfaces::*;
+
+    wayland_scanner::generate_server_code!("./protocols/ironland-frame-capture-v1.xml");
+}

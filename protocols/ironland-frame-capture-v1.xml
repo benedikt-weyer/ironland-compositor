@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="ironland_frame_capture_v1">
+  <copyright>
+    Copyright © 2026 the ironland-compositor contributors
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the
+    "Software"), to deal in the Software without restriction, including
+    without limitation the rights to use, copy, modify, merge, publish,
+    distribute, sublicense, and/or sell copies of the Software, and to
+    permit persons to whom the Software is furnished to do so, subject to
+    the following conditions:
+
+    The above copyright notice and this permission notice shall be included
+    in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+    IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+    TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+    SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="on-demand per-stage frame timing capture">
+    A debugging aid: lets a client ask the compositor to record a detailed
+    per-stage timing breakdown of the next N frames on every currently live
+    output, and stream that breakdown back as it's produced.
+
+    Not gated behind any permission mechanism (unlike
+    `ironland-capture-permissions-v1`/`ironland-permission-prompt-v1`):
+    nothing here exposes surface contents or other clients' data, only the
+    compositor's own internal timing, so any client may bind this global.
+  </description>
+
+  <interface name="ironland_frame_capture_manager_v1" version="1">
+    <description summary="manager for frame capture sessions">
+      This interface allows a client to start frame capture sessions.
+    </description>
+
+    <request name="capture">
+      <description summary="start capturing frame timing">
+        Starts a capture session covering every output the compositor
+        currently considers live. `frame_count` frames' worth of timing are
+        reported per output, independently - an output that's asleep or
+        disconnected for the whole session simply never reports any frames
+        rather than blocking the others.
+
+        The session ends (see `finished`) once every output live at the
+        time of this request has reported `frame_count` frames, or after a
+        compositor-chosen grace period elapses, whichever comes first.
+      </description>
+      <arg name="id" type="new_id" interface="ironland_frame_capture_v1"/>
+      <arg name="frame_count" type="uint"/>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Destroying the manager doesn't end capture sessions already started
+        through it.
+      </description>
+    </request>
+  </interface>
+
+  <interface name="ironland_frame_capture_v1" version="1">
+    <description summary="one frame capture session">
+      See `ironland_frame_capture_manager_v1.capture`.
+    </description>
+
+    <event name="stage">
+      <description summary="timing for one named stage of one captured frame">
+        Sent zero or more times per `(output, frame_index)` pair, in the
+        order the stages actually ran, as they're recorded - not
+        necessarily buffered until the whole frame is done. `name` is a
+        short compositor-defined identifier (e.g. "dispatch_clients",
+        "build_elements", "damage_and_draw", "submit"; the udev backend
+        additionally reports "since_vblank" and "vblank_throttled") - not
+        an enum, so new stages can appear without a protocol version bump.
+      </description>
+      <arg name="output" type="string"/>
+      <arg name="frame_index" type="uint"/>
+      <arg name="name" type="string"/>
+      <arg name="start_us" type="uint" summary="offset from the frame's start, in microseconds"/>
+      <arg name="duration_us" type="uint"/>
+    </event>
+
+    <event name="frame">
+      <description summary="summary for one captured frame">
+        Sent once per `(output, frame_index)` pair, after every `stage`
+        event for that frame.
+      </description>
+      <arg name="output" type="string"/>
+      <arg name="frame_index" type="uint"/>
+      <arg name="frame_time_us" type="uint"/>
+      <arg name="stutter" type="uint" summary="1 if this frame counted as a stutter, 0 otherwise"/>
+    </event>
+
+    <event name="finished">
+      <description summary="the session ended">
+        Sent exactly once, after which no further `stage`/`frame` events
+        follow for this object. The client should destroy it.
+      </description>
+    </event>
+
+    <request name="destroy" type="destructor">
+      <description summary="end the session">
+        Ends the session immediately if it's still active. No `finished`
+        event is sent for an explicit destroy.
+      </description>
+    </request>
+  </interface>
+</protocol>

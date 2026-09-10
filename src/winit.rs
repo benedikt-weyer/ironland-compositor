@@ -61,6 +61,11 @@ pub struct WinitData {
     full_redraw: u8,
     #[cfg(feature = "debug")]
     pub fps: fps_ticker::Fps,
+    /// Monotonic frame counter feeding `crate::frame_capture`'s
+    /// `frame_index` for this backend's one output - see
+    /// `crate::udev::SurfaceData::capture_frame_index`'s doc comment for
+    /// why this is separate from `crate::perf_overlay::FrameStats`.
+    capture_frame_index: u32,
 }
 
 impl DmabufHandler for AnvilState<WinitData> {
@@ -216,6 +221,7 @@ pub fn run_winit() {
             full_redraw: 0,
             #[cfg(feature = "debug")]
             fps: fps_ticker::Fps::default(),
+            capture_frame_index: 0,
         }
     };
     let mut state = AnvilState::init(display, event_loop.handle(), data, true);
@@ -422,6 +428,7 @@ pub fn run_winit() {
             let capture_size = crate::screencopy::output_buffer_size(&output);
             let presented: Duration = frame_target.into();
 
+            let build_and_draw_start = Instant::now();
             let render_res = backend.bind().and_then(|(renderer, mut fb)| {
                 #[cfg(feature = "debug")]
                 if let Some(renderdoc) = renderdoc.as_mut() {
@@ -576,14 +583,23 @@ pub fn run_winit() {
                     _ => unreachable!(),
                 })
             });
+            // Combined build+damage-track+draw time - `render_output`
+            // (`render.rs`) doesn't expose a seam between "building the
+            // element list" and "compositing it" the way `udev.rs`'s
+            // separate `render_frame`/`queue_frame` calls do, so this
+            // backend reports one coarser stage instead of splitting it.
+            let build_and_draw = build_and_draw_start.elapsed();
 
             match render_res {
                 Ok(render_output_result) => {
                     let has_rendered = render_output_result.damage.is_some();
+                    let mut submit = Duration::ZERO;
                     if let Some(damage) = render_output_result.damage {
+                        let submit_start = Instant::now();
                         if let Err(err) = backend.submit(Some(damage)) {
                             warn!("Failed to submit buffer: {}", err);
                         }
+                        submit = submit_start.elapsed();
                     }
 
                     #[cfg(feature = "debug")]
@@ -617,7 +633,29 @@ pub fn run_winit() {
                     );
 
                     if has_rendered {
-                        state.record_frame_stats(&output, Instant::now());
+                        let frame_index = state.backend_data.capture_frame_index;
+                        state.backend_data.capture_frame_index =
+                            state.backend_data.capture_frame_index.wrapping_add(1);
+                        if crate::frame_capture::is_capturing(&mut state) {
+                            let output_name = output.name();
+                            let mut offset = Duration::ZERO;
+                            for (name, duration) in [
+                                ("dispatch_clients", state.last_dispatch_duration),
+                                ("build_and_draw", build_and_draw),
+                                ("submit", submit),
+                            ] {
+                                crate::frame_capture::record_stage(
+                                    &mut state,
+                                    &output_name,
+                                    frame_index,
+                                    name,
+                                    offset,
+                                    duration,
+                                );
+                                offset += duration;
+                            }
+                        }
+                        state.record_frame_stats(&output, Instant::now(), frame_index);
                         let mut output_presentation_feedback =
                             take_presentation_feedback(&output, &state.space, &states);
                         output_presentation_feedback.presented(

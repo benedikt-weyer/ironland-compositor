@@ -814,6 +814,20 @@ struct SurfaceData {
     dmabuf_feedback: Option<SurfaceDmabufFeedback>,
     last_presentation_time: Option<Time<Monotonic>>,
     vblank_throttle_timer: Option<RegistrationToken>,
+    /// Set by `frame_finish` right before scheduling the repaint timer, so
+    /// `render_surface` can report `crate::frame_capture`'s "since_vblank"
+    /// stage - how long actually elapsed between the vblank event and the
+    /// compositor starting its own repaint, including any timer-scheduling
+    /// overhead on top of the intentional `repaint_delay`. Only ever set
+    /// while a capture session is open (see `frame_capture::is_capturing`);
+    /// taken (not just read) by `render_surface` so a frame that's
+    /// rescheduled without an intervening vblank doesn't report stale data.
+    pending_vblank_at: Option<Instant>,
+    /// Monotonic per-output frame counter feeding `crate::frame_capture`'s
+    /// `frame_index` - unrelated to `crate::perf_overlay::FrameStats`'s own
+    /// history, which is keyed by output name instead and serves a
+    /// different purpose (the FPS overlay's rolling average).
+    capture_frame_index: u32,
 }
 
 impl Drop for SurfaceData {
@@ -1297,6 +1311,8 @@ impl AnvilState<UdevData> {
                 dmabuf_feedback,
                 last_presentation_time: None,
                 vblank_throttle_timer: None,
+                pending_vblank_at: None,
+                capture_frame_index: 0,
             };
 
             device.surfaces.insert(crtc, surface);
@@ -1485,6 +1501,14 @@ impl AnvilState<UdevData> {
     ) {
         profiling::scope!("frame_finish", &format!("{crtc:?}"));
 
+        // Only timestamped while a `crate::frame_capture` session is open -
+        // an `Instant::now()` here isn't free enough to want on every
+        // vblank forever, just cheap enough to afford while diagnosing.
+        // Computed up front, before `device_backend`/`surface` below are
+        // borrowed, since a call needing the whole `&mut self` can't be
+        // interleaved with a live borrow of one of its fields.
+        let vblank_observed_at = crate::frame_capture::is_capturing(self).then(Instant::now);
+
         let device_backend = match self.backend_data.backends.get_mut(&dev_id) {
             Some(backend) => backend,
             None => {
@@ -1558,6 +1582,7 @@ impl AnvilState<UdevData> {
                 WARN_ONCE.call_once(|| {
                     warn!("display running faster than expected, throttling vblanks and disabling HwClock")
                 });
+                let capture_frame_index = surface.capture_frame_index;
                 let throttled_time = tp
                     .map(|tp| tp.saturating_add(vblank_remaining_time))
                     .unwrap_or(Duration::ZERO);
@@ -1576,6 +1601,20 @@ impl AnvilState<UdevData> {
                     )
                     .expect("failed to register vblank throttle timer");
                 surface.vblank_throttle_timer = Some(timer_token);
+                // `WARN_ONCE` above means this branch has no per-occurrence
+                // signal otherwise - if it's being taken every frame (not
+                // just the first time), this marker is the only way to see
+                // that from a capture. `surface`'s last use is the
+                // assignment just above, so it's safe to hand `self` to a
+                // free function here.
+                crate::frame_capture::record_stage(
+                    self,
+                    &output.name(),
+                    capture_frame_index,
+                    "vblank_throttled",
+                    Duration::ZERO,
+                    Duration::ZERO,
+                );
                 return;
             }
         }
@@ -1622,6 +1661,7 @@ impl AnvilState<UdevData> {
 
         if schedule_render {
             let next_frame_target = clock + frame_duration;
+            surface.pending_vblank_at = vblank_observed_at;
 
             // What are we trying to solve by introducing a delay here:
             //
@@ -1793,6 +1833,8 @@ impl AnvilState<UdevData> {
         let perf_stats = self.perf_stats.entry(output.name()).or_default();
         let border_cache = self.border_cache.entry(output.name()).or_default();
         let drop_indicator_cache = self.drop_indicator_cache.entry(output.name()).or_default();
+        let capture_frame_index = surface.capture_frame_index;
+        let since_vblank = surface.pending_vblank_at.take().map(|at| at.elapsed());
         let result = render_surface(
             surface,
             &mut renderer,
@@ -1821,11 +1863,46 @@ impl AnvilState<UdevData> {
             presented,
         );
         let reschedule = match result {
-            Ok((has_rendered, states)) => {
+            Ok((has_rendered, states, timings)) => {
                 let dmabuf_feedback = surface.dmabuf_feedback.clone();
+                if has_rendered {
+                    surface.capture_frame_index = surface.capture_frame_index.wrapping_add(1);
+                }
                 self.post_repaint(&output, frame_target, dmabuf_feedback, &states);
                 if has_rendered {
-                    self.record_frame_stats(&output, Instant::now());
+                    if crate::frame_capture::is_capturing(self) {
+                        let output_name = output.name();
+                        let stages: [(&str, Duration); 4] = [
+                            ("dispatch_clients", self.last_dispatch_duration),
+                            ("build_elements", timings.build_elements),
+                            ("damage_and_draw", timings.damage_and_draw),
+                            ("submit", timings.submit),
+                        ];
+                        let mut offset = Duration::ZERO;
+                        if let Some(since_vblank) = since_vblank {
+                            crate::frame_capture::record_stage(
+                                self,
+                                &output_name,
+                                capture_frame_index,
+                                "since_vblank",
+                                offset,
+                                since_vblank,
+                            );
+                            offset += since_vblank;
+                        }
+                        for (name, duration) in stages {
+                            crate::frame_capture::record_stage(
+                                self,
+                                &output_name,
+                                capture_frame_index,
+                                name,
+                                offset,
+                                duration,
+                            );
+                            offset += duration;
+                        }
+                    }
+                    self.record_frame_stats(&output, Instant::now(), capture_frame_index);
                 }
                 !has_rendered
             }
@@ -1892,6 +1969,22 @@ impl AnvilState<UdevData> {
     }
 }
 
+/// How long each phase of one [`render_surface`] call took - always
+/// measured (an `Instant::now()` pair per phase is cheap enough not to
+/// bother gating), but only turned into `crate::frame_capture` `stage`
+/// events by the caller while a capture session is actually open.
+#[derive(Debug, Clone, Copy)]
+struct RenderTimings {
+    /// Cursor/overlay assembly plus `render::output_elements` - building
+    /// the render element list, not yet drawing anything.
+    build_elements: Duration,
+    /// `DrmOutput::render_frame` - the actual damage-tracked composite.
+    damage_and_draw: Duration,
+    /// `DrmOutput::queue_frame` - the DRM atomic commit/page-flip submit.
+    /// `Duration::ZERO` when nothing was rendered (queue_frame is skipped).
+    submit: Duration,
+}
+
 #[allow(clippy::too_many_arguments)]
 #[profiling::function]
 fn render_surface<'a>(
@@ -1920,7 +2013,8 @@ fn render_surface<'a>(
     perf_stats: &crate::perf_overlay::FrameStats,
     pending_captures: Vec<smithay::wayland::image_copy_capture::Frame>,
     presented: Duration,
-) -> Result<(bool, RenderElementStates), SwapBuffersError> {
+) -> Result<(bool, RenderElementStates, RenderTimings), SwapBuffersError> {
+    let build_start = Instant::now();
     let output_geometry = space.output_geometry(output).unwrap();
     let scale = Scale::from(output.current_scale().fractional_scale());
 
@@ -2118,12 +2212,14 @@ fn render_surface<'a>(
         drop_indicator,
         drop_indicator_cache,
     );
+    let build_elements = build_start.elapsed();
 
     let frame_mode = if surface.disable_direct_scanout {
         FrameFlags::empty()
     } else {
         FrameFlags::DEFAULT
     };
+    let damage_start = Instant::now();
     let render_frame_result = surface
         .drm_output
         .render_frame(renderer, &elements, clear_color, frame_mode)
@@ -2136,6 +2232,7 @@ fn render_surface<'a>(
             ) => SwapBuffersError::from(err),
             _ => unreachable!(),
         })?;
+    let damage_and_draw = damage_start.elapsed();
 
     #[cfg(feature = "renderer_sync")]
     if let PrimaryPlaneElement::Swapchain(element) = render_frame_result.primary_element {
@@ -2159,15 +2256,26 @@ fn render_surface<'a>(
 
     update_primary_scanout_output(space, output, dnd_icon, cursor_status, &states);
 
+    let mut submit = Duration::ZERO;
     if rendered {
         let output_presentation_feedback = take_presentation_feedback(output, space, &states);
+        let submit_start = Instant::now();
         surface
             .drm_output
             .queue_frame(Some(output_presentation_feedback))
             .map_err(Into::<SwapBuffersError>::into)?;
+        submit = submit_start.elapsed();
     }
 
-    Ok((rendered, states))
+    Ok((
+        rendered,
+        states,
+        RenderTimings {
+            build_elements,
+            damage_and_draw,
+            submit,
+        },
+    ))
 }
 
 /// Completes `pending` by reading back the frame `render_frame_result`
