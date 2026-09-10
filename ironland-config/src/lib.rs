@@ -378,6 +378,11 @@ pub fn default_shortcuts() -> HashMap<String, Vec<String>> {
         // `shortcut:<name>` escape hatch - not the compositor's built-in
         // launcher above.
         ("shortcut:launcher", vec!["super"]),
+        // Fires the shell's own "screenshot" shortcut (see
+        // caelestia-shell-iron's `modules/areapicker/AreaPicker.qml`) the
+        // same way - the shell's picker overlay handles whole-display vs.
+        // drag-to-select itself.
+        ("shortcut:screenshot", vec!["print"]),
         ("open_browser", vec!["super+b"]),
         ("open_file_manager", vec!["super+f"]),
         ("toggle_floating", vec!["super+shift+space"]),

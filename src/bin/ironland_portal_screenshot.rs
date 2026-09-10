@@ -5,8 +5,11 @@
 //! doc) over the compositor's *privileged* capture Wayland socket
 //! (`$IRONLAND_CAPTURE_SOCKET`, set by the compositor and exported to
 //! systemd/D-Bus activation environment the same way `$WAYLAND_DISPLAY` is
-//! - see `crate::session`). Ordinary clients can't reach those protocols at
-//! all; this binary is the one client that can.
+//! - see `crate::session`). That socket isn't itself what gates capture
+//! (see `crate::screencopy`'s module doc - the compositor gates every
+//! capturer, this binary included, by its own executable identity); this
+//! binary just also needs `ironland-permission-prompt-v1`, which *is*
+//! restricted to it.
 //!
 //! Like `ironland-portal-global-shortcuts`, this is a small standalone
 //! Wayland client - not part of the compositor binary - meant to be D-Bus
@@ -19,7 +22,11 @@
 //!
 //! ## Permission model
 //!
-//! `Screenshot()` requests are gated per requesting `app_id`:
+//! `Screenshot()` requests are gated per requesting `app_id` *on top of*
+//! the compositor's own per-executable gate on `crate::screencopy` - two
+//! independent layers, since this binary can't vouch for who it's
+//! capturing on behalf of any more than a client-supplied `app_id` string
+//! can be trusted on its own:
 //!
 //! - A decision already on file in the persisted [`Store`]
 //!   (`$XDG_CONFIG_HOME/ironland-compositor/screenshot-permissions.json`,
@@ -30,6 +37,15 @@
 //!   an on-screen "`app_id` wants to capture your screen" prompt (see
 //!   `crate::permission_prompt`) and blocks on the user's Enter/Escape
 //!   answer, which is then persisted for next time.
+//!
+//! Even once this layer approves an `app_id`, the actual `capture` request
+//! still has to clear the compositor's own gate on this binary's
+//! executable path (see `crate::screencopy`'s module doc) - on a fresh
+//! install that means the *very first* `Screenshot()` call ever, from any
+//! app, fails with a compositor-drawn (or shell-rendered) prompt asking to
+//! approve `ironland-portal-screenshot` itself; the caller has to be asked
+//! again afterward; every call after that first approval only needs the
+//! per-`app_id` layer above.
 //!
 //! `app_id` here is whatever xdg-desktop-portal passes us, which for a
 //! non-sandboxed caller can be empty - such callers share one persisted

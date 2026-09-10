@@ -136,9 +136,10 @@ pub struct ClientState {
     pub security_context: Option<SecurityContext>,
     /// Whether this client connected through the privileged capture socket
     /// (see `AnvilState::init`'s `capture_socket_name`), and so may bind
-    /// the `ext-image-capture-source-v1`/`ext-image-copy-capture-v1`
-    /// manager globals - see `crate::screencopy`'s module doc for why this
-    /// gate exists and who it ends up admitting in practice.
+    /// the `ironland-permission-prompt-v1` manager global - unlike screen
+    /// capture itself (see `crate::screencopy`'s module doc), which is
+    /// unrestricted; this gate exists only so an arbitrary client can't pop
+    /// a spoofed system permission dialog.
     pub capture_privileged: bool,
 }
 impl ClientData for ClientState {
@@ -766,13 +767,38 @@ impl<BackendData: Backend> ImageCopyCaptureHandler for AnvilState<BackendData> {
 
     fn frame(&mut self, session: &SessionRef, frame: Frame) {
         use smithay::output::WeakOutput;
+        use smithay::wayland::image_copy_capture::CaptureFailureReason;
+
+        // Gate here, not at session creation: negotiating a session never
+        // reads screen content, so it's harmless to let any client do -
+        // only an actual `capture` request needs a decision on file. See
+        // `crate::screencopy`'s module doc for the full model.
+        let Some(client) = frame.buffer().client() else {
+            frame.fail(CaptureFailureReason::Unknown);
+            return;
+        };
+        let subject = crate::screencopy::client_identity(&self.display_handle, &client);
+        match self.screencopy.grant(&subject) {
+            Some(true) => {}
+            Some(false) => {
+                frame.fail(CaptureFailureReason::Unknown);
+                return;
+            }
+            None => {
+                self.permission_prompt
+                    .queue_internal(subject, "capture your screen".to_string());
+                frame.fail(CaptureFailureReason::Unknown);
+                return;
+            }
+        }
+
         let Some(output) = session
             .source()
             .user_data()
             .get::<WeakOutput>()
             .and_then(WeakOutput::upgrade)
         else {
-            frame.fail(smithay::wayland::image_copy_capture::CaptureFailureReason::Unknown);
+            frame.fail(CaptureFailureReason::Unknown);
             return;
         };
         // Completed by the next successful render of `output` - see
@@ -789,6 +815,10 @@ impl<BackendData: Backend> ImageCopyCaptureHandler for AnvilState<BackendData> {
 impl<BackendData: Backend> crate::permission_prompt::PermissionPromptHandler for AnvilState<BackendData> {
     fn permission_prompt_state(&mut self) -> &mut crate::permission_prompt::PermissionPromptManagerState {
         &mut self.permission_prompt
+    }
+
+    fn capture_grant_resolved(&mut self, subject: String, allowed: bool) {
+        self.screencopy.set_grant(subject, allowed);
     }
 }
 
@@ -923,19 +953,28 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         });
         FixesState::new::<Self>(&dh);
 
-        // Image capture protocols (screencopy) - gated to clients connected
-        // through the privileged capture socket set up above; see
-        // `crate::screencopy`'s module doc.
+        // Image capture protocols (screencopy) - unrestricted, like every
+        // other wlroots-style compositor's screencopy protocol: the
+        // trusted shell's own native screenshot tool needs direct,
+        // unprompted access to these exactly like the compositor's own
+        // overlays do, so gating this at the Wayland-protocol level would
+        // either lock the shell out or make it indistinguishable from a
+        // random untrusted client. Per-app consent for *portal*-mediated
+        // screenshots (the path sandboxed/third-party apps actually use)
+        // is enforced one layer up, entirely within
+        // `ironland-portal-screenshot` - see `crate::screencopy`'s module
+        // doc.
+        let image_capture_source_state = ImageCaptureSourceState::new();
+        let output_capture_source_state = OutputCaptureSourceState::new::<Self>(&dh);
+        let image_copy_capture_state = ImageCopyCaptureState::new::<Self>(&dh);
+        // The permission-prompt global stays gated to the privileged
+        // capture socket, unlike the above: unrestricted access here would
+        // let *any* client pop a spoofed "X wants to Y" system dialog.
         let capture_privileged = |client: &Client| {
             client
                 .get_data::<ClientState>()
                 .is_some_and(|c| c.capture_privileged)
         };
-        let image_capture_source_state = ImageCaptureSourceState::new();
-        let output_capture_source_state =
-            OutputCaptureSourceState::new_with_filter::<Self, _>(&dh, capture_privileged);
-        let image_copy_capture_state =
-            ImageCopyCaptureState::new_with_filter::<Self, _>(&dh, capture_privileged);
         let permission_prompt = crate::permission_prompt::PermissionPromptManagerState::new::<Self, _>(
             &dh,
             capture_privileged,
@@ -992,7 +1031,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             image_capture_source_state,
             output_capture_source_state,
             image_copy_capture_state,
-            screencopy: crate::screencopy::ScreencopyState::default(),
+            screencopy: crate::screencopy::ScreencopyState::load(),
             permission_prompt,
             capture_socket_name,
             dnd_icon: None,

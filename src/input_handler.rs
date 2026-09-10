@@ -382,10 +382,10 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                         if let KeyState::Pressed = state {
                             match keysym {
                                 Keysym::Return | Keysym::KP_Enter => {
-                                    data.permission_prompt.answer(true);
+                                    crate::permission_prompt::answer(data, true);
                                 }
                                 Keysym::Escape => {
-                                    data.permission_prompt.answer(false);
+                                    crate::permission_prompt::answer(data, false);
                                 }
                                 _ => {}
                             }
