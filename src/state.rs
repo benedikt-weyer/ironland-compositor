@@ -232,7 +232,6 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     /// `crate::screencopy`.
     pub screencopy: crate::screencopy::ScreencopyState,
     pub permission_prompt: crate::permission_prompt::PermissionPromptManagerState,
-    pub capture_permissions: crate::capture_permissions::CapturePermissionsState,
     /// Captured clipboard history and its grant table; see
     /// `crate::clipboard`.
     pub clipboard_history: crate::clipboard::ClipboardHistoryState,
@@ -910,33 +909,11 @@ impl<BackendData: Backend> crate::permission_prompt::PermissionPromptHandler for
     ) {
         match kind {
             crate::permission_prompt::PromptKind::Capture => {
-                use crate::capture_permissions::CapturePermissionsHandler;
-                self.set_capture_grant(subject, allowed);
+                self.screencopy.set_grant(subject, allowed);
             }
             crate::permission_prompt::PromptKind::ClipboardHistory => {
                 crate::clipboard::resolve_grant(self, subject, allowed);
             }
-        }
-    }
-}
-
-impl<BackendData: Backend> crate::capture_permissions::CapturePermissionsHandler for AnvilState<BackendData> {
-    fn capture_permissions_state(&mut self) -> &mut crate::capture_permissions::CapturePermissionsState {
-        &mut self.capture_permissions
-    }
-
-    fn capture_grants(&self) -> Vec<(String, bool)> {
-        self.screencopy.grants_snapshot()
-    }
-
-    fn set_capture_grant(&mut self, subject: String, allowed: bool) {
-        self.screencopy.set_grant(subject.clone(), allowed);
-        crate::capture_permissions::sync_entry(self, &subject, allowed);
-    }
-
-    fn forget_capture_grant(&mut self, subject: &str) {
-        if self.screencopy.forget_grant(subject) {
-            crate::capture_permissions::sync_removed(self, subject);
         }
     }
 }
@@ -1128,12 +1105,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             &dh,
             capture_privileged,
         );
-        // Same gate as `permission_prompt` above, and for the same reason:
-        // this exposes and edits *who's* allowed to capture the screen, so
-        // it's no less sensitive than the prompt itself.
-        let capture_permissions =
-            crate::capture_permissions::CapturePermissionsState::new::<Self, _>(&dh, capture_privileged);
-        // Unrestricted, unlike the two above - see `crate::clipboard`'s
+        // Unrestricted, unlike the above - see `crate::clipboard`'s
         // module doc: binding this alone reveals nothing, access to actual
         // history content is gated per-executable instead.
         let clipboard_history = crate::clipboard::ClipboardHistoryState::new::<Self>(&dh);
@@ -1192,7 +1164,6 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             image_copy_capture_state,
             screencopy: crate::screencopy::ScreencopyState::default(),
             permission_prompt,
-            capture_permissions,
             clipboard_history,
             capture_socket_name,
             dnd_icon: None,

@@ -143,22 +143,6 @@ impl ScreencopyState {
         self.grants.get(subject).copied()
     }
 
-    /// Every decision currently on file, for `crate::capture_permissions`'s
-    /// initial-bind burst.
-    pub fn grants_snapshot(&self) -> Vec<(String, bool)> {
-        self.grants
-            .iter()
-            .map(|(subject, allowed)| (subject.clone(), *allowed))
-            .collect()
-    }
-
-    /// Removes any decision on file for `subject`. Returns whether there
-    /// was one to remove, so `crate::capture_permissions` knows whether a
-    /// `removed` broadcast is warranted.
-    pub fn forget_grant(&mut self, subject: &str) -> bool {
-        self.grants.remove(subject).is_some()
-    }
-
     /// Records a decision for `subject`, for the rest of this compositor
     /// process's lifetime (see the module doc). Called back via
     /// `PermissionPromptHandler::internal_prompt_resolved` once the user

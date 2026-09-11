@@ -1,6 +1,7 @@
 //! Server side of the `ironland-permission-prompt-v1` protocol (see
-//! `crate::ironland_protocols::permission_prompt` for the generated bindings
-//! and `protocols/ironland-permission-prompt-v1.xml` for the wire format).
+//! `crate::ironland_protocols::permission_prompt` for the generated
+//! bindings and `protocols/ironland-permission-prompt-v1.xml` for the wire
+//! format).
 //!
 //! Two kinds of prompt share this one queue, distinguished by
 //! [`PromptTarget`]:
@@ -17,20 +18,19 @@
 //!   these calls back via [`PermissionPromptHandler::internal_prompt_resolved`]
 //!   instead of firing a protocol event.
 //!
-//! Separately, a privileged *renderer* client (in practice, this
-//! compositor's companion shell, caelestia-shell-iron) calls `set_renderer`
-//! once at startup to take over showing every prompt - of either kind - as
-//! `show`/`cancel` events, themed and laid out however it likes, and
-//! answers them via `answer`.
-//!
-//! If no renderer is registered - the shell isn't running yet, or is an
-//! older build without this protocol - [`PermissionPromptManagerState`]
-//! falls back to drawing a minimal prompt of its own (reusing the bitmap
-//! font from `crate::font`/`crate::drawing`, the same way the launcher
-//! does) and reading the user's Enter/Escape answer directly in
-//! `crate::input_handler`, so a prompt is never simply lost. This fallback
-//! is fully inert once a renderer registers - see [`PermissionPromptManagerState::is_visible`]/
-//! [`PermissionPromptManagerState::ensure_buffer`]/[`answer`].
+//! Every prompt, of either kind, is drawn by this compositor itself
+//! (reusing the bitmap font from `crate::font`/`crate::drawing`, the same
+//! way the launcher does) and answered by reading the user's Enter/Escape
+//! directly in `crate::input_handler` - there is deliberately no way for
+//! any client to take over rendering a prompt or to answer on the user's
+//! behalf. An earlier version of this module let a second privileged
+//! client (a *renderer*, in practice this compositor's companion shell)
+//! do exactly that; it was removed because the only thing gating who
+//! could claim that role was "connected through the privileged capture
+//! socket", which any local process can do - letting it silently
+//! self-approve every prompt, its own capture request included, with no
+//! UI ever shown to the user. See `protocols/ironland-permission-prompt-v1.xml`'s
+//! own doc for the same history from the wire format's side.
 
 use std::collections::VecDeque;
 
@@ -89,10 +89,6 @@ enum PromptTarget {
 
 #[derive(Debug)]
 struct PendingPrompt {
-    /// Opaque id handed to the renderer (see the protocol doc for why -
-    /// renderer and requester are different client connections, so their
-    /// own object ids for this prompt don't correspond).
-    id: u32,
     /// For a wire-requested prompt, the requesting `app_id` as chosen by
     /// the (trusted) requester. For an internal one (see
     /// [`PromptTarget::Internal`]), doubles as the subject
@@ -116,15 +112,7 @@ const COLOR_HINT: [u8; 4] = [200, 170, 120, 255];
 #[derive(Debug)]
 pub struct PermissionPromptManagerState {
     global: GlobalId,
-    next_id: u32,
     queue: VecDeque<PendingPrompt>,
-    /// The client that called `set_renderer`, if any - see the module doc.
-    /// While set, every prompt is described to it via `show`/`cancel`
-    /// instead of the fallback bitmap-font overlay, and only its `answer`
-    /// requests resolve them.
-    renderer: Option<IronlandPermissionPromptManagerV1>,
-    /// Fallback overlay buffer, only ever populated while `renderer` is
-    /// `None`.
     buffer: Option<MemoryRenderBuffer>,
     dirty: bool,
 }
@@ -141,16 +129,14 @@ impl PermissionPromptManagerState {
         F: Fn(&Client) -> bool + Send + Sync + 'static,
     {
         let global = dh.create_global::<D, IronlandPermissionPromptManagerV1, _>(
-            2,
+            1,
             ManagerGlobalData {
                 filter: Box::new(filter),
             },
         );
         PermissionPromptManagerState {
             global,
-            next_id: 1,
             queue: VecDeque::new(),
-            renderer: None,
             buffer: None,
             dirty: false,
         }
@@ -175,27 +161,20 @@ impl PermissionPromptManagerState {
             return;
         }
 
-        let prompt_id = self.next_id;
-        self.next_id = self.next_id.wrapping_add(1);
-        match &self.renderer {
-            Some(renderer) => renderer.show(prompt_id, subject.clone(), reason.clone()),
-            None => self.dirty = true,
-        }
+        self.dirty = true;
         self.queue.push_back(PendingPrompt {
-            id: prompt_id,
             app_id: subject,
             reason,
             target: PromptTarget::Internal(kind),
         });
     }
 
-    /// Whether the fallback overlay should be showing (queue non-empty and
-    /// no renderer has taken over).
+    /// Whether the compositor's own prompt overlay should be showing.
     pub fn is_visible(&self) -> bool {
-        self.renderer.is_none() && !self.queue.is_empty()
+        !self.queue.is_empty()
     }
 
-    /// The logical size of the fallback overlay, for centering by callers.
+    /// The logical size of the prompt overlay, for centering by callers.
     pub fn logical_size(&self) -> Size<i32, smithay::utils::Logical> {
         Size::from((PROMPT_WIDTH, PROMPT_PADDING * 2 + LINE_HEIGHT * 2))
     }
@@ -224,14 +203,10 @@ impl PermissionPromptManagerState {
         canvas
     }
 
-    /// Returns the fallback overlay buffer, rebuilding it if the showing
-    /// prompt changed since the last frame. `None` whenever there's
-    /// nothing to fall back for (a renderer is registered, or the queue is
-    /// empty).
+    /// Returns the prompt overlay buffer, rebuilding it if the showing
+    /// prompt changed since the last frame. `None` whenever the queue is
+    /// empty.
     pub fn ensure_buffer(&mut self) -> Option<&MemoryRenderBuffer> {
-        if self.renderer.is_some() {
-            return None;
-        }
         let front = self.queue.front()?;
         if self.dirty || self.buffer.is_none() {
             let canvas = Self::rasterize(front);
@@ -266,17 +241,12 @@ fn send_answer<D: PermissionPromptHandler>(state: &mut D, prompt: PendingPrompt,
     }
 }
 
-/// Answers the currently-showing prompt via the fallback overlay (if any)
-/// and shows the next queued one, if any. A no-op (returns `false`) once a
-/// renderer has registered - it answers via the protocol's `answer` request
-/// instead (see the `Dispatch2` impl below). Returns whether a prompt was
-/// actually answered, so callers (`input_handler`) know whether to consume
-/// the key.
+/// Answers the currently-showing prompt (the compositor's own overlay, via
+/// the user's Enter/Escape - see `crate::input_handler`) and shows the next
+/// queued one, if any. Returns whether a prompt was actually answered, so
+/// callers know whether to consume the key.
 pub fn answer<D: PermissionPromptHandler>(state: &mut D, allow: bool) -> bool {
     let prompt_state = state.permission_prompt_state();
-    if prompt_state.renderer.is_some() {
-        return false;
-    }
     let Some(prompt) = prompt_state.queue.pop_front() else {
         return false;
     };
@@ -284,17 +254,6 @@ pub fn answer<D: PermissionPromptHandler>(state: &mut D, allow: bool) -> bool {
     prompt_state.buffer = None;
     send_answer(state, prompt, allow);
     true
-}
-
-/// Resolves the prompt named `id` (the protocol's `answer` request's job).
-/// A no-op if `id` doesn't name a pending prompt.
-fn resolve<D: PermissionPromptHandler>(state: &mut D, id: u32, allow: bool) {
-    let prompt_state = state.permission_prompt_state();
-    let Some(pos) = prompt_state.queue.iter().position(|p| p.id == id) else {
-        return;
-    };
-    let prompt = prompt_state.queue.remove(pos).unwrap();
-    send_answer(state, prompt, allow);
 }
 
 /// Global data for the `ironland_permission_prompt_manager_v1` global: the
@@ -350,7 +309,7 @@ where
         &self,
         state: &mut D,
         _client: &Client,
-        manager: &IronlandPermissionPromptManagerV1,
+        _manager: &IronlandPermissionPromptManagerV1,
         request: ironland_permission_prompt_manager_v1::Request,
         _dh: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
@@ -359,36 +318,12 @@ where
             ironland_permission_prompt_manager_v1::Request::Prompt { id, app_id, reason } => {
                 let resource = data_init.init(id, PromptToken);
                 let prompt_state = state.permission_prompt_state();
-                let prompt_id = prompt_state.next_id;
-                prompt_state.next_id = prompt_state.next_id.wrapping_add(1);
-                match &prompt_state.renderer {
-                    Some(renderer) => renderer.show(prompt_id, app_id.clone(), reason.clone()),
-                    None => prompt_state.dirty = true,
-                }
+                prompt_state.dirty = true;
                 prompt_state.queue.push_back(PendingPrompt {
-                    id: prompt_id,
                     app_id,
                     reason,
                     target: PromptTarget::Requester(resource),
                 });
-            }
-            ironland_permission_prompt_manager_v1::Request::SetRenderer => {
-                let prompt_state = state.permission_prompt_state();
-                prompt_state.renderer = Some(manager.clone());
-                // Flush every already-queued prompt (including any the
-                // fallback overlay was mid-showing) to the new renderer,
-                // and retire the fallback since it's no longer relevant.
-                for prompt in &prompt_state.queue {
-                    manager.show(prompt.id, prompt.app_id.clone(), prompt.reason.clone());
-                }
-                prompt_state.buffer = None;
-                prompt_state.dirty = false;
-            }
-            ironland_permission_prompt_manager_v1::Request::Answer { prompt_id, allowed } => {
-                if state.permission_prompt_state().renderer.as_ref() != Some(manager) {
-                    return;
-                }
-                resolve(state, prompt_id, allowed != 0);
             }
             ironland_permission_prompt_manager_v1::Request::Destroy => {}
         }
@@ -416,15 +351,11 @@ impl<D: PermissionPromptHandler> Dispatch2<IronlandPermissionPromptV1, D> for Pr
             return;
         };
         let was_front = pos == 0;
-        let prompt = prompt_state.queue.remove(pos).unwrap();
+        prompt_state.queue.remove(pos);
 
-        match &prompt_state.renderer {
-            Some(renderer) => renderer.cancel(prompt.id),
-            None if was_front => {
-                prompt_state.dirty = true;
-                prompt_state.buffer = None;
-            }
-            None => {}
+        if was_front {
+            prompt_state.dirty = true;
+            prompt_state.buffer = None;
         }
     }
 }

@@ -36,21 +36,23 @@
     the trusted caller, never anything the prompted-about app itself can
     influence directly.
 
-    Two privileged roles use this same manager global: a *requester* (an
-    xdg-desktop-portal backend) calls `prompt` to ask for one; a *renderer*
-    (in practice, this compositor's companion shell) calls `set_renderer`
-    once to take over showing every prompt as `show`/`cancel` events and
-    answering them via `answer`. If no renderer has registered - the shell
-    isn't running yet, or isn't built with support for this protocol - the
-    compositor falls back to drawing a minimal prompt of its own and
-    reading Enter/Escape directly, so a prompt is never simply lost.
+    The prompt itself is always drawn and answered by the compositor -
+    there is deliberately no way for any client, privileged or not, to take
+    over rendering it or to answer on the user's behalf. An earlier version
+    of this protocol let a second privileged role (a *renderer*, in
+    practice this compositor's companion shell) do exactly that; it was
+    removed because the only thing gating who could claim that role was
+    "connected through the same privileged socket", which every client on
+    this system can do - letting any local process silently self-approve
+    every prompt, its own included, with no UI ever shown. See
+    `crate::permission_prompt`'s module doc for the fallback prompt this
+    compositor draws itself.
   </description>
 
-  <interface name="ironland_permission_prompt_manager_v1" version="2">
+  <interface name="ironland_permission_prompt_manager_v1" version="1">
     <description summary="manager for permission prompt objects">
       This interface allows a privileged client to ask that a permission
-      prompt be shown (as a requester), or to take over showing every
-      prompt itself (as a renderer).
+      prompt be shown to the user.
     </description>
 
     <request name="prompt">
@@ -67,56 +69,8 @@
     <request name="destroy" type="destructor">
       <description summary="destroy the manager">
         Destroying the manager doesn't affect prompts already created
-        through it, nor does it un-register this client as the renderer if
-        it was one (there is currently no way to do that short of
-        disconnecting).
+        through it.
       </description>
-    </request>
-
-    <request name="set_renderer" since="2">
-      <description summary="take over rendering every prompt">
-        Registers this client as the prompt renderer: from now on, every
-        prompt (including any already queued when this is called) is
-        described to it via `show` instead of being drawn by the
-        compositor itself, and only this client's `answer` requests
-        resolve them. Only one renderer is tracked at a time; a second
-        caller replaces the first (e.g. the shell restarting).
-      </description>
-    </request>
-
-    <event name="show" since="2">
-      <description summary="a prompt needs showing">
-        Sent only to the registered renderer, once per prompt, in the order
-        prompts were requested. `prompt_id` is opaque and unrelated to any
-        `ironland_permission_prompt_v1` object id (renderer and requester
-        are different clients, so object ids between them don't
-        correspond) - pass it back to `answer`.
-      </description>
-      <arg name="prompt_id" type="uint"/>
-      <arg name="app_id" type="string"/>
-      <arg name="reason" type="string"/>
-    </event>
-
-    <event name="cancel" since="2">
-      <description summary="a shown-but-unanswered prompt is no longer relevant">
-        Sent only to the registered renderer, if a prompt named by a prior
-        `show` is destroyed by its requester (e.g. it disconnected or timed
-        out) before `answer` was called for it. The renderer should stop
-        showing it, if it still is.
-      </description>
-      <arg name="prompt_id" type="uint"/>
-    </event>
-
-    <request name="answer" since="2">
-      <description summary="answer a shown prompt">
-        Resolves the prompt named `prompt_id` (from a prior `show` event on
-        this same connection). Ignored (a protocol no-op, not an error - the
-        prompt may have just been cancelled) if `prompt_id` doesn't name a
-        currently-pending prompt, or if this client isn't the registered
-        renderer.
-      </description>
-      <arg name="prompt_id" type="uint"/>
-      <arg name="allowed" type="uint" summary="1 to allow, 0 to deny"/>
     </request>
   </interface>
 
@@ -127,24 +81,22 @@
 
     <event name="allowed">
       <description summary="the user allowed the request">
-        Sent at most once, when the user (or the registered renderer, on
-        their behalf) answers yes.
+        Sent at most once, when the user answers yes.
       </description>
     </event>
 
     <event name="denied">
       <description summary="the user denied the request, or the prompt was cancelled">
-        Sent at most once, when the user (or the registered renderer)
-        answers no, or when the prompt is destroyed by the compositor
-        before being answered (e.g. session teardown).
+        Sent at most once, when the user answers no, or when the prompt is
+        destroyed by the compositor before being answered (e.g. session
+        teardown).
       </description>
     </event>
 
     <request name="destroy" type="destructor">
       <description summary="destroy the prompt">
         If not yet answered, this cancels it (dismissing it from the queue,
-        or from the screen if it was showing, and sending `cancel` to the
-        registered renderer if there is one) with no `allowed`/`denied`
+        or from the screen if it was showing) with no `allowed`/`denied`
         event sent for it.
       </description>
     </request>
