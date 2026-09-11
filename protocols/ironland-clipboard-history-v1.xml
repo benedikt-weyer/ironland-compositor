@@ -30,9 +30,9 @@
     watches every `set_selection` (whether from an ordinary client, an
     Xwayland client, or an external `wlr-data-control`/`ext-data-control`
     clipboard tool) and keeps a bounded, most-recent-first, in-memory-only
-    list of the plain-text ones - see `crate::clipboard`'s module doc in
-    the compositor for exactly what is and isn't captured, and why this
-    never touches disk.
+    list of the plain-text and decodable-image ones - see `crate::clipboard`'s
+    module doc in the compositor for exactly what is and isn't captured, and
+    why this never touches disk.
 
     The manager global itself is unrestricted, the same way and for the
     same reason `ext-image-capture-source-v1` is (see `crate::screencopy`'s
@@ -54,7 +54,7 @@
     client's `remove`/`remove_all` requests have any effect.
   </description>
 
-  <interface name="ironland_clipboard_history_manager_v1" version="1">
+  <interface name="ironland_clipboard_history_manager_v1" version="2">
     <description summary="manager for the clipboard history">
       See the protocol-level description for the permission model this is
       gated behind.
@@ -98,12 +98,14 @@
         written. Ignored entirely (fd closed unwritten) unless this client
         is currently granted.
 
-        Entries only ever carry plain text (see the protocol description),
-        so in practice `mime_type` is always the one `text/…` string an
-        `entry` event names - this mirrors `wl_data_offer.receive`'s shape
-        instead of inlining the content into the `entry` event itself
-        because Wayland's own wire protocol caps a single message's size
-        well below what clipboard text can reach.
+        In practice `mime_type` is always the one string an `entry` event's
+        `mime_types` names, whether that's a `text/…` type or the image
+        type the entry was actually captured as - this mirrors
+        `wl_data_offer.receive`'s shape instead of inlining the content
+        into the `entry` event itself because Wayland's own wire protocol
+        caps a single message's size well below what clipboard text or a
+        full-resolution image can reach (see `thumbnail` for a
+        small preview that *is* inlined, for image entries).
       </description>
       <arg name="id" type="uint"/>
       <arg name="mime_type" type="string"/>
@@ -118,12 +120,32 @@
         `id` matches a previously-sent one - a client should treat this as
         "move this id to the most-recent position", not a second entry).
         `mime_types` is every mime type the original copy offered,
-        space-separated; `preview` is the captured text, truncated to a
-        short length for display - use `receive` for the full content.
+        space-separated; `preview` is the captured text truncated to a
+        short length for display, or a human-readable "Image (WxH)" label
+        for an image entry (see `thumbnail`) - use `receive` for the full
+        content either way.
       </description>
       <arg name="id" type="uint"/>
       <arg name="mime_types" type="string"/>
       <arg name="preview" type="string"/>
+    </event>
+
+    <event name="thumbnail" since="2">
+      <description summary="a small preview image for an image entry">
+        Sent immediately after `entry`, only for an id whose captured
+        content was a decodable image rather than text - text entries never
+        get one. `bytes` is a small downscaled copy of the image, always PNG
+        regardless of the original mime type, sized to fit within
+        `width`x`height` (its actual dimensions, preserving the original
+        aspect ratio); it exists so a client can render a grid of history
+        entries without fetching each one's full-resolution content via
+        `receive`. Re-sent, like `entry`, whenever the entry is freshly
+        captured or promoted back to most-recent.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="width" type="uint"/>
+      <arg name="height" type="uint"/>
+      <arg name="bytes" type="array"/>
     </event>
 
     <event name="removed">
