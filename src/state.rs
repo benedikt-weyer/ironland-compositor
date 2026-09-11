@@ -966,6 +966,19 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
     ) -> AnvilState<BackendData> {
         let dh = display.handle();
 
+        // wayland-backend's per-client outgoing buffer defaults to 4096
+        // bytes and a single message that doesn't fit in it (even after
+        // growing up to that cap) makes `write_message` return `E2BIG`,
+        // which disconnects the client outright - surfacing on the client
+        // side as "the Wayland connection broke". `clipboard::send_entry`
+        // inlines an image entry's PNG-encoded thumbnail directly into the
+        // `thumbnail` event's wire message (see that protocol's doc for
+        // why it's inlined rather than streamed like `receive`), and a
+        // `THUMBNAIL_MAX_DIM`-bounded thumbnail routinely exceeds 4096
+        // bytes for anything but a near-blank image, so the default here
+        // must be raised well above the largest thumbnail that can occur.
+        dh.backend_handle().set_default_max_buffer_size(1024 * 1024);
+
         let clock = Clock::new();
 
         let config = crate::config::Config::load();

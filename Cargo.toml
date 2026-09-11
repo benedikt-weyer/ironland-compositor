@@ -83,7 +83,13 @@ wayland-protocols-wlr = { version = "0.3.12", default-features = false, features
 # `src/hyprland_protocols.rs`), which aren't in the `wayland-protocols`/
 # `wayland-protocols-wlr` crates.
 wayland-server = "0.31.14"
-wayland-backend = "0.3.17"
+# `libwayland_server_1_23` unlocks `Handle::set_default_max_buffer_size`
+# (used in `state.rs`, see the comment there) - it's an opt-in Cargo feature
+# rather than auto-detected because it links
+# `wl_display_set_default_max_buffer_size`, only present in
+# libwayland-server >= 1.23 (2024-09); fine here since ironland-compositor
+# already targets a current libwayland.
+wayland-backend = { version = "0.3.17", features = ["libwayland_server_1_23"] }
 wayland-scanner = "0.31.11"
 
 [dependencies.smithay]
