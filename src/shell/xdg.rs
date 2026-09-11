@@ -21,7 +21,7 @@ use smithay::{
         seat::WaylandFocus,
         shell::xdg::{
             Configure, PopupSurface, PositionerState, ToplevelCachedState, ToplevelSurface, XdgShellHandler,
-            XdgShellState,
+            XdgShellState, XdgToplevelSurfaceData,
         },
     },
 };
@@ -47,6 +47,21 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
         // Do not send a configure here, the initial configure
         // of a xdg_surface has to be sent during the commit if
         // the surface is not already configured
+
+        // A client may destroy its xdg_toplevel/xdg_surface and immediately
+        // create new ones on the same wl_surface (e.g. some toolkits do this
+        // on a display-mode change) instead of destroying the wl_surface
+        // itself. Smithay's XdgToplevelSurfaceData is lazily created once per
+        // wl_surface and never reset on role-object destruction, so the new
+        // toplevel would otherwise inherit `initial_configure_sent = true`
+        // from the previous one's lifetime and never get a configure sent -
+        // the client then waits forever and never attaches a buffer.
+        with_states(surface.wl_surface(), |states| {
+            if let Some(attrs) = states.data_map.get::<XdgToplevelSurfaceData>() {
+                attrs.lock().unwrap().initial_configure_sent = false;
+            }
+        });
+
         let window = WindowElement(Window::new_wayland_window(surface.clone()));
         if tiling::should_tile(&window) {
             tiling::tile_new_window(self, &window, self.pointer.current_location());
