@@ -96,7 +96,12 @@ const MAX_CAPTURE_BYTES: usize = 4 * 1024 * 1024;
 /// larger since a screenshot or photo routinely exceeds the text cap.
 const MAX_IMAGE_CAPTURE_BYTES: usize = 16 * 1024 * 1024;
 /// The box an image entry's thumbnail is scaled to fit within (aspect
-/// ratio preserved) - see [`EntryContent::Image`].
+/// ratio preserved) - see [`EntryContent::Image`]. No ceiling on the
+/// encoded PNG's byte size is needed here: unlike the `entry`/`thumbnail`
+/// events themselves, `receive_thumbnail` hands the pixels back over a
+/// pipe (see `send_thumbnail`), the same way `receive` does for full
+/// content, so nothing about this is bounded by the Wayland wire protocol's
+/// per-message size limit.
 const THUMBNAIL_MAX_DIM: u32 = 160;
 /// How long [`capture`] waits for the offering client to finish writing
 /// before giving up on that one copy.
@@ -213,7 +218,7 @@ impl ClipboardHistoryState {
         D: GlobalDispatch<IronlandClipboardHistoryManagerV1, ManagerGlobalData> + 'static,
     {
         let global =
-            dh.create_global::<D, IronlandClipboardHistoryManagerV1, _>(2, ManagerGlobalData);
+            dh.create_global::<D, IronlandClipboardHistoryManagerV1, _>(3, ManagerGlobalData);
         ClipboardHistoryState {
             global: Some(global),
             ..Default::default()
@@ -246,8 +251,8 @@ fn preview_of(text: &str) -> String {
 /// [`broadcast_entry`].
 fn send_entry(entry: &ClipboardEntry, resource: &IronlandClipboardHistoryManagerV1) {
     resource.entry(entry.id, entry.mime_types.join(" "), entry.content.preview());
-    if let EntryContent::Image { thumb_width, thumb_height, thumbnail, .. } = &entry.content {
-        resource.thumbnail(entry.id, *thumb_width, *thumb_height, thumbnail.clone());
+    if let EntryContent::Image { thumb_width, thumb_height, .. } = &entry.content {
+        resource.thumbnail(entry.id, *thumb_width, *thumb_height);
     }
 }
 
@@ -596,6 +601,12 @@ impl<D: ClipboardHistoryHandler> Dispatch2<IronlandClipboardHistoryManagerV1, D>
                 }
                 send_content(state, id, &mime_type, fd);
             }
+            ironland_clipboard_history_manager_v1::Request::ReceiveThumbnail { id, fd } => {
+                if !is_listener {
+                    return;
+                }
+                send_thumbnail(state, id, fd);
+            }
             ironland_clipboard_history_manager_v1::Request::Destroy => {}
         }
     }
@@ -626,6 +637,26 @@ fn send_content<D: ClipboardHistoryHandler>(state: &mut D, id: u32, mime_type: &
         if let Some(bytes) = bytes {
             let mut file = std::fs::File::from(fd);
             let _ = file.write_all(&bytes);
+        }
+    });
+}
+
+/// Writes entry `id`'s thumbnail PNG to `fd` - see the protocol's
+/// `receive_thumbnail` request doc. `fd` is simply dropped (closed) if `id`
+/// names no currently-known entry or a text one with no thumbnail. Same
+/// off-thread rationale as [`send_content`].
+fn send_thumbnail<D: ClipboardHistoryHandler>(state: &mut D, id: u32, fd: OwnedFd) {
+    let thumbnail = state.clipboard_history_state().entries.iter().find(|e| e.id == id).and_then(|e| {
+        match &e.content {
+            EntryContent::Image { thumbnail, .. } => Some(thumbnail.clone()),
+            EntryContent::Text(_) => None,
+        }
+    });
+
+    std::thread::spawn(move || {
+        if let Some(thumbnail) = thumbnail {
+            let mut file = std::fs::File::from(fd);
+            let _ = file.write_all(&thumbnail);
         }
     });
 }

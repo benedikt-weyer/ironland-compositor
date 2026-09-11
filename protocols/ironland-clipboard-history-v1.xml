@@ -54,7 +54,7 @@
     client's `remove`/`remove_all` requests have any effect.
   </description>
 
-  <interface name="ironland_clipboard_history_manager_v1" version="2">
+  <interface name="ironland_clipboard_history_manager_v1" version="3">
     <description summary="manager for the clipboard history">
       See the protocol-level description for the permission model this is
       gated behind.
@@ -112,6 +112,27 @@
       <arg name="fd" type="fd"/>
     </request>
 
+    <request name="receive_thumbnail" since="3">
+      <description summary="read one entry's thumbnail image">
+        Asks that entry `id`'s thumbnail (always PNG, per the `thumbnail`
+        event's own description) be written to `fd`, the same way `receive`
+        works for an entry's full content - set `fd` up as the write end of
+        a pipe first, and close its read end only after this compositor
+        closes the write end. A no-op that closes `fd` unwritten if `id`
+        names no currently-known entry, that entry has no thumbnail (it's a
+        text entry), or this client isn't currently granted.
+
+        Split out from the `thumbnail` event itself, rather than inlined the
+        way that event's `width`/`height` are, because Wayland's wire
+        protocol caps a single message's size well below what even a small
+        downscaled image can reach once PNG-encoded - the same reason
+        `receive` exists instead of inlining an entry's full content into
+        `entry`.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="fd" type="fd"/>
+    </request>
+
     <event name="entry">
       <description summary="an entry was captured, or is being reported at bind time">
         Sent once per entry already on file immediately after a granted
@@ -131,21 +152,21 @@
     </event>
 
     <event name="thumbnail" since="2">
-      <description summary="a small preview image for an image entry">
+      <description summary="a small preview image is available for an image entry">
         Sent immediately after `entry`, only for an id whose captured
         content was a decodable image rather than text - text entries never
-        get one. `bytes` is a small downscaled copy of the image, always PNG
-        regardless of the original mime type, sized to fit within
-        `width`x`height` (its actual dimensions, preserving the original
-        aspect ratio); it exists so a client can render a grid of history
-        entries without fetching each one's full-resolution content via
-        `receive`. Re-sent, like `entry`, whenever the entry is freshly
-        captured or promoted back to most-recent.
+        get one. `width`x`height` is the thumbnail's own actual size (fit
+        within some compositor-chosen box, preserving the original image's
+        aspect ratio) - it exists so a client can lay out a grid of history
+        entries before fetching each thumbnail's pixels via
+        `receive_thumbnail` (always PNG, regardless of the original mime
+        type), and full-resolution content via `receive`. Re-sent, like
+        `entry`, whenever the entry is freshly captured or promoted back to
+        most-recent.
       </description>
       <arg name="id" type="uint"/>
       <arg name="width" type="uint"/>
       <arg name="height" type="uint"/>
-      <arg name="bytes" type="array"/>
     </event>
 
     <event name="removed">
