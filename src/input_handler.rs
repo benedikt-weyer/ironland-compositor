@@ -13,7 +13,8 @@ use smithay::{backend::renderer::DebugFlags, input::tablet};
 use smithay::{
     backend::input::{
         self, Axis, AxisSource, Device, DeviceCapability, Event, InputBackend, InputEvent,
-        InputTime, KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent, TouchEvent,
+        InputTime, KeyState, KeyboardKeyEvent, MouseButton, PointerAxisEvent, PointerButtonEvent,
+        TouchEvent,
     },
     desktop::{WindowSurfaceType, layer_map_for_output},
     input::{
@@ -472,6 +473,27 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         let button = evt.button_code();
 
         let state = wl_pointer::ButtonState::from(evt.state());
+
+        // While a permission prompt (see `crate::permission_prompt`) is
+        // showing it grabs the whole pointer too, same as the keyboard
+        // grab below: every button is consumed, and a left-click release
+        // lands answering it if it's on Allow/Deny. Answering on release
+        // (not press) matches how a normal button widget behaves - a press
+        // that drags off the button before releasing doesn't activate it.
+        if self.permission_prompt.is_visible() {
+            if wl_pointer::ButtonState::Released == state && evt.button() == Some(MouseButton::Left) {
+                let location = self.pointer.current_location();
+                let hit = self.space.output_under(location).next().and_then(|output| {
+                    let output_geo = self.space.output_geometry(output).unwrap();
+                    let local = (location - output_geo.loc.to_f64()).to_i32_round();
+                    self.permission_prompt.hit_test(output_geo.size, local)
+                });
+                if let Some(allow) = hit {
+                    crate::permission_prompt::answer(self, allow);
+                }
+            }
+            return;
+        }
 
         if wl_pointer::ButtonState::Pressed == state {
             self.update_keyboard_focus(self.pointer.current_location(), serial);

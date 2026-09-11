@@ -2093,6 +2093,30 @@ fn render_surface<'a>(
         }
     }
 
+    // The permission prompt (see `crate::permission_prompt`) is pushed
+    // right after the pointer/dnd icon, ahead of every other overlay -
+    // it's the one thing on screen a user must never be able to
+    // accidentally cover, since answering it wrong grants or denies a
+    // real capability.
+    let permission_prompt_location = permission_prompt
+        .origin_in(output_geometry.size)
+        .to_f64()
+        .to_physical(scale);
+    if let Some(prompt_buffer) = permission_prompt.ensure_buffer() {
+        let location = permission_prompt_location;
+        if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
+            renderer,
+            location,
+            prompt_buffer,
+            None,
+            None,
+            None,
+            Kind::Unspecified,
+        ) {
+            custom_elements.push(CustomRenderElements::Overlay(element));
+        }
+    }
+
     #[cfg(feature = "debug")]
     if let Some(element) = surface.fps_element.as_mut() {
         element.update_fps(surface.fps.avg().round() as u32);
@@ -2136,24 +2160,6 @@ fn render_surface<'a>(
             renderer,
             location,
             launcher_buffer,
-            None,
-            None,
-            None,
-            Kind::Unspecified,
-        ) {
-            custom_elements.push(CustomRenderElements::Overlay(element));
-        }
-    }
-
-    let prompt_size = permission_prompt.logical_size();
-    if let Some(prompt_buffer) = permission_prompt.ensure_buffer() {
-        let location = Point::<i32, Logical>::from(((output_geometry.size.w - prompt_size.w) / 2, 24))
-            .to_f64()
-            .to_physical(scale);
-        if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
-            renderer,
-            location,
-            prompt_buffer,
             None,
             None,
             None,

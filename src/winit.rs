@@ -345,8 +345,9 @@ pub fn run_winit() {
             let permission_prompt_buffer = state.permission_prompt.ensure_buffer().cloned();
             let permission_prompt_location = permission_prompt_buffer.as_ref().map(|_| {
                 let output_size = state.space.output_geometry(&output).unwrap().size;
-                let prompt_size = state.permission_prompt.logical_size();
-                Point::<i32, Logical>::from(((output_size.w - prompt_size.w) / 2, 24))
+                state
+                    .permission_prompt
+                    .origin_in(output_size)
                     .to_f64()
                     .to_physical(scale)
             });
@@ -469,6 +470,27 @@ pub fn run_winit() {
                     }
                 }
 
+                // The permission prompt (see `crate::permission_prompt`) is
+                // pushed right after the pointer/dnd icon, ahead of every
+                // other overlay - it's the one thing on screen a user must
+                // never be able to accidentally cover, since answering it
+                // wrong grants or denies a real capability.
+                if let (Some(prompt_buffer), Some(location)) =
+                    (&permission_prompt_buffer, permission_prompt_location)
+                {
+                    if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
+                        renderer,
+                        location,
+                        prompt_buffer,
+                        None,
+                        None,
+                        None,
+                        Kind::Unspecified,
+                    ) {
+                        elements.push(CustomRenderElements::Overlay(element));
+                    }
+                }
+
                 #[cfg(feature = "debug")]
                 elements.push(CustomRenderElements::Fps(fps_element.clone()));
 
@@ -505,22 +527,6 @@ pub fn run_winit() {
                         renderer,
                         location,
                         launcher_buffer,
-                        None,
-                        None,
-                        None,
-                        Kind::Unspecified,
-                    ) {
-                        elements.push(CustomRenderElements::Overlay(element));
-                    }
-                }
-
-                if let (Some(prompt_buffer), Some(location)) =
-                    (&permission_prompt_buffer, permission_prompt_location)
-                {
-                    if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
-                        renderer,
-                        location,
-                        prompt_buffer,
                         None,
                         None,
                         None,

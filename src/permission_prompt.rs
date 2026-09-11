@@ -20,17 +20,28 @@
 //!
 //! Every prompt, of either kind, is drawn by this compositor itself
 //! (reusing the bitmap font from `crate::font`/`crate::drawing`, the same
-//! way the launcher does) and answered by reading the user's Enter/Escape
-//! directly in `crate::input_handler` - there is deliberately no way for
-//! any client to take over rendering a prompt or to answer on the user's
-//! behalf. An earlier version of this module let a second privileged
-//! client (a *renderer*, in practice this compositor's companion shell)
-//! do exactly that; it was removed because the only thing gating who
-//! could claim that role was "connected through the privileged capture
-//! socket", which any local process can do - letting it silently
-//! self-approve every prompt, its own capture request included, with no
-//! UI ever shown to the user. See `protocols/ironland-permission-prompt-v1.xml`'s
-//! own doc for the same history from the wire format's side.
+//! way the launcher does) as a clickable Allow/Deny pair - answered either
+//! by clicking one (`crate::input_handler::on_pointer_button`, hit-tested
+//! against [`PermissionPromptManagerState::hit_test`]) or by the user's
+//! Enter/Escape (`crate::input_handler`'s keyboard path) - there is
+//! deliberately no way for any client to take over rendering a prompt or
+//! to answer on the user's behalf. An earlier version of this module let a
+//! second privileged client (a *renderer*, in practice this compositor's
+//! companion shell) do exactly that; it was removed because the only
+//! thing gating who could claim that role was "connected through the
+//! privileged capture socket", which any local process can do - letting
+//! it silently self-approve every prompt, its own capture request
+//! included, with no UI ever shown to the user. See
+//! `protocols/ironland-permission-prompt-v1.xml`'s own doc for the same
+//! history from the wire format's side.
+//!
+//! The prompt is always composited as the frontmost of this compositor's
+//! own overlay elements (`crate::winit`/`crate::udev` push it right after
+//! the pointer/dnd icon, ahead of the launcher, FPS overlay and workspace
+//! switcher) - and those overlay elements are themselves always drawn
+//! above every window and every client's layer-shell surface (bars,
+//! popups, notifications included - see `crate::render::output_elements`),
+//! so nothing can visually cover the prompt while it's showing.
 
 use std::collections::VecDeque;
 
@@ -39,10 +50,13 @@ use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New,
     backend::{ClientId, GlobalId},
 };
-use smithay::utils::Transform;
+use smithay::utils::{Logical, Point, Transform};
 use smithay::wayland::Dispatch2;
 use smithay::wayland::GlobalDispatch2;
-use smithay::{backend::renderer::element::memory::MemoryRenderBuffer, utils::Size};
+use smithay::{
+    backend::renderer::element::memory::MemoryRenderBuffer,
+    utils::{Rectangle, Size},
+};
 
 use crate::font::Canvas;
 use crate::ironland_protocols::permission_prompt::{
@@ -104,9 +118,49 @@ const PROMPT_PADDING: i32 = 18;
 const FONT_SCALE: i32 = 2;
 const LINE_HEIGHT: i32 = crate::font::GLYPH_HEIGHT as i32 * FONT_SCALE + 10;
 
+// Button row layout - see `button_rects`/`button_height`, the one source
+// of truth both drawing (`rasterize`) and pointer hit-testing (`hit_test`)
+// read from, so they can never drift apart.
+const BUTTON_PADDING_X: i32 = 18;
+const BUTTON_PADDING_Y: i32 = 9;
+const BUTTON_GAP: i32 = 16;
+const BUTTON_ROW_TOP_GAP: i32 = 14;
+
 const COLOR_BACKGROUND: [u8; 4] = [40, 30, 30, 245];
 const COLOR_TITLE: [u8; 4] = [235, 230, 225, 255];
-const COLOR_HINT: [u8; 4] = [200, 170, 120, 255];
+const COLOR_DENY_BUTTON: [u8; 4] = [110, 50, 50, 255];
+const COLOR_ALLOW_BUTTON: [u8; 4] = [70, 110, 70, 255];
+const COLOR_BUTTON_TEXT: [u8; 4] = [245, 240, 235, 255];
+
+/// Height, in logical pixels, of an Allow/Deny button - just the glyph
+/// height at [`FONT_SCALE`] plus vertical padding, same for both since
+/// they share a row.
+fn button_height() -> i32 {
+    crate::font::GLYPH_HEIGHT as i32 * FONT_SCALE + BUTTON_PADDING_Y * 2
+}
+
+/// The Deny and Allow buttons' rectangles, in prompt-local logical pixels
+/// (i.e. relative to the prompt's own top-left corner - add
+/// [`PermissionPromptManagerState::origin_in`] to place them on an
+/// output). Centered as a pair under the title line; sized to fit each
+/// label plus [`BUTTON_PADDING_X`] on every side. Takes no prompt-specific
+/// input - the labels are fixed strings, so the layout never changes.
+fn button_rects() -> (Rectangle<i32, Logical>, Rectangle<i32, Logical>) {
+    let height = button_height();
+    let deny_width = Canvas::text_width("Deny", FONT_SCALE) + BUTTON_PADDING_X * 2;
+    let allow_width = Canvas::text_width("Allow", FONT_SCALE) + BUTTON_PADDING_X * 2;
+    let content_width = PROMPT_WIDTH - PROMPT_PADDING * 2;
+    let row_width = deny_width + BUTTON_GAP + allow_width;
+    let row_x = PROMPT_PADDING + (content_width - row_width) / 2;
+    let row_y = PROMPT_PADDING + LINE_HEIGHT + BUTTON_ROW_TOP_GAP;
+
+    let deny = Rectangle::new((row_x, row_y).into(), (deny_width, height).into());
+    let allow = Rectangle::new(
+        (row_x + deny_width + BUTTON_GAP, row_y).into(),
+        (allow_width, height).into(),
+    );
+    (deny, allow)
+}
 
 /// State of the `ironland_permission_prompt_manager_v1` global.
 #[derive(Debug)]
@@ -175,13 +229,48 @@ impl PermissionPromptManagerState {
     }
 
     /// The logical size of the prompt overlay, for centering by callers.
-    pub fn logical_size(&self) -> Size<i32, smithay::utils::Logical> {
-        Size::from((PROMPT_WIDTH, PROMPT_PADDING * 2 + LINE_HEIGHT * 2))
+    pub fn logical_size(&self) -> Size<i32, Logical> {
+        Size::from((
+            PROMPT_WIDTH,
+            PROMPT_PADDING * 2 + LINE_HEIGHT + BUTTON_ROW_TOP_GAP + button_height(),
+        ))
+    }
+
+    /// Where this prompt is drawn on an output whose logical size is
+    /// `output_size` - top-centered, a fixed distance down from the top
+    /// edge. The one place this placement formula lives; `crate::winit`
+    /// and `crate::udev` call it to position the render element, and
+    /// [`Self::hit_test`] calls it to translate a pointer click into
+    /// prompt-local coordinates, so the two can never disagree about where
+    /// the prompt actually is.
+    pub fn origin_in(&self, output_size: Size<i32, Logical>) -> Point<i32, Logical> {
+        let prompt_size = self.logical_size();
+        Point::from(((output_size.w - prompt_size.w) / 2, 24))
+    }
+
+    /// Tests a pointer click at `point` (logical coordinates on an output
+    /// of `output_size`, both in that output's own space) against the
+    /// currently-showing prompt's Allow/Deny buttons. `Some(true)` for a
+    /// hit on Allow, `Some(false)` for Deny, `None` if the click missed
+    /// both or nothing is showing.
+    pub fn hit_test(&self, output_size: Size<i32, Logical>, point: Point<i32, Logical>) -> Option<bool> {
+        if !self.is_visible() {
+            return None;
+        }
+        let local = point - self.origin_in(output_size);
+        let (deny, allow) = button_rects();
+        if allow.contains(local) {
+            Some(true)
+        } else if deny.contains(local) {
+            Some(false)
+        } else {
+            None
+        }
     }
 
     fn rasterize(front: &PendingPrompt) -> Canvas {
         let width = PROMPT_WIDTH;
-        let height = PROMPT_PADDING * 2 + LINE_HEIGHT * 2;
+        let height = PROMPT_PADDING * 2 + LINE_HEIGHT + BUTTON_ROW_TOP_GAP + button_height();
         let mut canvas = Canvas::new(width as usize, height as usize, COLOR_BACKGROUND);
 
         let title = format!("{} wants to {}", front.app_id, front.reason);
@@ -192,12 +281,32 @@ impl PermissionPromptManagerState {
             FONT_SCALE,
             COLOR_TITLE,
         );
+
+        let (deny, allow) = button_rects();
+        canvas.fill_rect(deny.loc.x, deny.loc.y, deny.size.w, deny.size.h, COLOR_DENY_BUTTON);
+        canvas.fill_rect(
+            allow.loc.x,
+            allow.loc.y,
+            allow.size.w,
+            allow.size.h,
+            COLOR_ALLOW_BUTTON,
+        );
+
+        let deny_label_width = Canvas::text_width("Deny", FONT_SCALE);
         canvas.draw_text(
-            PROMPT_PADDING,
-            PROMPT_PADDING + LINE_HEIGHT,
-            "[Enter] Allow      [Esc] Deny",
+            deny.loc.x + (deny.size.w - deny_label_width) / 2,
+            deny.loc.y + BUTTON_PADDING_Y,
+            "Deny",
             FONT_SCALE,
-            COLOR_HINT,
+            COLOR_BUTTON_TEXT,
+        );
+        let allow_label_width = Canvas::text_width("Allow", FONT_SCALE);
+        canvas.draw_text(
+            allow.loc.x + (allow.size.w - allow_label_width) / 2,
+            allow.loc.y + BUTTON_PADDING_Y,
+            "Allow",
+            FONT_SCALE,
+            COLOR_BUTTON_TEXT,
         );
 
         canvas
