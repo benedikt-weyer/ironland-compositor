@@ -71,6 +71,7 @@ use smithay::wayland::Dispatch2;
 use smithay::wayland::GlobalDispatch2;
 use smithay::wayland::selection::SelectionSource;
 use smithay::wayland::selection::data_device::{DataDeviceHandler, request_data_device_client_selection};
+use tracing::debug;
 
 use crate::ironland_protocols::clipboard_history::ironland_clipboard_history_manager_v1::{
     self, IronlandClipboardHistoryManagerV1,
@@ -213,13 +214,16 @@ fn broadcast_cleared<D: ClipboardHistoryHandler>(state: &mut D) {
 /// [`capture`] set up has been fully read.
 fn finish_capture<D: ClipboardHistoryHandler>(state: &mut D, mime_types: Vec<String>, bytes: Vec<u8>) {
     if bytes.is_empty() || bytes.len() > MAX_CAPTURE_BYTES {
+        debug!(len = bytes.len(), "clipboard: capture empty or too large, discarding");
         return;
     }
     let Ok(text) = String::from_utf8(bytes) else {
+        debug!("clipboard: capture wasn't valid UTF-8, discarding");
         return;
     };
     let text = text.trim_end_matches(['\n', '\r', '\0']).to_string();
     if text.is_empty() {
+        debug!("clipboard: capture was empty after trimming, discarding");
         return;
     }
 
@@ -233,6 +237,11 @@ fn finish_capture<D: ClipboardHistoryHandler>(state: &mut D, mime_types: Vec<Str
         id
     };
     let entry = ClipboardEntry { id, mime_types, text };
+    debug!(
+        id,
+        listeners = history.listeners.len(),
+        "clipboard: entry recorded, broadcasting to granted listeners"
+    );
     history.entries.push_front(entry.clone());
 
     let mut evicted = Vec::new();
@@ -281,8 +290,10 @@ where
 {
     let mime_types = source.mime_types();
     let Some(mime_type) = pick_mime_type(&mime_types) else {
+        debug!(?mime_types, "clipboard: new selection offers nothing capturable, skipping");
         return;
     };
+    debug!(%mime_type, ?mime_types, "clipboard: new selection captured, will read on idle");
     let seat = seat.clone();
     let handle_for_idle = handle.clone();
     handle.insert_idle(move |state: &mut D| {
@@ -305,7 +316,8 @@ where
     // advertises - see `receive`'s doc in the protocol XML for why this
     // needs to stay accurate.
     let stored_mime_types = vec![mime_type.clone()];
-    if request_data_device_client_selection(seat, mime_type, write_fd).is_err() {
+    if let Err(err) = request_data_device_client_selection(seat, mime_type, write_fd) {
+        debug!(?err, "clipboard: request_data_device_client_selection failed, not capturing");
         return;
     }
 
@@ -358,6 +370,7 @@ where
 /// the initial burst and moving it to `listeners` if allowed, or sending
 /// `denied` if not.
 pub fn resolve_grant<D: ClipboardHistoryHandler>(state: &mut D, subject: String, allowed: bool) {
+    debug!(%subject, allowed, "clipboard: grant decision recorded");
     state.clipboard_history_state().set_grant(subject.clone(), allowed);
 
     let history = state.clipboard_history_state();
@@ -411,13 +424,16 @@ where
         let subject = state.clipboard_client_identity(client);
         match state.clipboard_history_state().grant(&subject) {
             Some(true) => {
+                debug!(%subject, "clipboard: bind from already-granted executable, sending history");
                 send_initial_burst(&state.clipboard_history_state().entries, &resource);
                 state.clipboard_history_state().listeners.push(resource);
             }
             Some(false) => {
+                debug!(%subject, "clipboard: bind from already-denied executable");
                 resource.denied();
             }
             None => {
+                debug!(%subject, "clipboard: bind from undecided executable, queuing prompt");
                 state.clipboard_history_state().pending.push((subject.clone(), resource));
                 state.permission_prompt_state().queue_internal(
                     PromptKind::ClipboardHistory,
