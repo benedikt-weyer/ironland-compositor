@@ -265,6 +265,16 @@ fn pick_mime_type(mime_types: &[String]) -> Option<String> {
 /// Entry point called from `AnvilState`'s `SelectionHandler::new_selection`
 /// for every `SelectionTarget::Clipboard` change - see the module doc.
 /// A no-op if `source` offers nothing worth capturing.
+///
+/// The actual read is deferred to an idle callback rather than started
+/// here: `new_selection` runs *before* Smithay records `source` as the
+/// seat's current clipboard selection (it does that itself right after this
+/// handler returns), and [`request_data_device_client_selection`] reads
+/// that seat-recorded selection - calling it synchronously here would win
+/// the read against the *previous* selection (or fail with no selection at
+/// all, for the very first copy of a session). An idle callback runs once
+/// the event loop is about to block again, i.e. strictly after Smithay's
+/// own update, so by then the seat reflects `source`.
 pub fn capture<D>(handle: &LoopHandle<'static, D>, seat: &Seat<D>, source: &SelectionSource)
 where
     D: SeatHandler + DataDeviceHandler + ClipboardHistoryHandler + 'static,
@@ -273,6 +283,20 @@ where
     let Some(mime_type) = pick_mime_type(&mime_types) else {
         return;
     };
+    let seat = seat.clone();
+    let handle_for_idle = handle.clone();
+    handle.insert_idle(move |state: &mut D| {
+        start_read(&handle_for_idle, &seat, mime_type, state);
+    });
+}
+
+/// Opens the pipe and asks the offering client (now recorded as the seat's
+/// current clipboard selection - see [`capture`]) to write `mime_type`'s
+/// content into it, then registers the read side with the event loop.
+fn start_read<D>(handle: &LoopHandle<'static, D>, seat: &Seat<D>, mime_type: String, _state: &mut D)
+where
+    D: SeatHandler + DataDeviceHandler + ClipboardHistoryHandler + 'static,
+{
     let Ok((read_fd, write_fd)) = pipe_with(PipeFlags::CLOEXEC | PipeFlags::NONBLOCK) else {
         return;
     };
