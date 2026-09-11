@@ -1,7 +1,8 @@
 //! Server-side generated bindings for ironland-compositor's own small
 //! Wayland protocol extensions (XML under `protocols/`): named shortcuts,
-//! single-surface focus grabs, and per-window workspace membership (see
-//! `crate::shortcuts`, `crate::focus_grab`, and `crate::workspace_windows`).
+//! single-surface focus grabs, per-window workspace membership, and an
+//! in-memory clipboard history (see `crate::shortcuts`, `crate::focus_grab`,
+//! `crate::workspace_windows`, and `crate::clipboard`).
 //!
 //! These aren't in the `wayland-protocols`/`wayland-protocols-wlr` crates
 //! (nothing standard covers either need, and Hyprland's own equivalents -
@@ -102,4 +103,17 @@ pub mod frame_capture {
     use self::__interfaces::*;
 
     wayland_scanner::generate_server_code!("./protocols/ironland-frame-capture-v1.xml");
+}
+
+pub mod clipboard_history {
+    use wayland_server;
+    use wayland_server::protocol::*;
+
+    pub mod __interfaces {
+        use wayland_server::protocol::__interfaces::*;
+        wayland_scanner::generate_interfaces!("./protocols/ironland-clipboard-history-v1.xml");
+    }
+    use self::__interfaces::*;
+
+    wayland_scanner::generate_server_code!("./protocols/ironland-clipboard-history-v1.xml");
 }

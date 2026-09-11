@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="ironland_clipboard_history_v1">
+  <copyright>
+    Copyright © 2026 the ironland-compositor contributors
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the
+    "Software"), to deal in the Software without restriction, including
+    without limitation the rights to use, copy, modify, merge, publish,
+    distribute, sublicense, and/or sell copies of the Software, and to
+    permit persons to whom the Software is furnished to do so, subject to
+    the following conditions:
+
+    The above copyright notice and this permission notice shall be included
+    in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+    IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+    TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+    SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="read and manage an in-memory clipboard history">
+    Lets a client observe the compositor's own record of past clipboard
+    (`wl_data_device` selection) contents, and remove entries from it. The
+    compositor itself is the one true clipboard manager: it silently
+    watches every `set_selection` (whether from an ordinary client, an
+    Xwayland client, or an external `wlr-data-control`/`ext-data-control`
+    clipboard tool) and keeps a bounded, most-recent-first, in-memory-only
+    list of the plain-text ones - see `crate::clipboard`'s module doc in
+    the compositor for exactly what is and isn't captured, and why this
+    never touches disk.
+
+    The manager global itself is unrestricted, the same way and for the
+    same reason `ext-image-capture-source-v1` is (see `crate::screencopy`'s
+    module doc): binding it alone never reveals anything. What actually
+    matters - receiving `entry` events at all - is gated per requesting
+    executable, resolved the same kernel-backed way screen-capture grants
+    are. The first time an unrecognized executable binds this global, an
+    on-screen prompt (`ironland-permission-prompt-v1`) asks the user to
+    allow or deny it; the decision is remembered (in memory only, for this
+    compositor process's lifetime) from then on. A client bound while
+    denied - or while a prompt is still pending - receives no `entry`
+    events and, once resolved, a `denied` event if the answer was no.
+
+    A client that *is* granted receives one `entry` event per entry
+    currently on file (oldest first) immediately on bind, and another
+    every time a new entry is captured or an existing one is promoted back
+    to most-recent (see `entry`'s own description) - so a granted client
+    only needs to bind once to keep a live-updated view. Only a granted
+    client's `remove`/`remove_all` requests have any effect.
+  </description>
+
+  <interface name="ironland_clipboard_history_manager_v1" version="1">
+    <description summary="manager for the clipboard history">
+      See the protocol-level description for the permission model this is
+      gated behind.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Stops this client from receiving further events. Doesn't affect
+        the clipboard history itself, nor any decision on file for this
+        client's executable.
+      </description>
+    </request>
+
+    <request name="remove">
+      <description summary="remove one entry">
+        Removes the entry named `id` (from a prior `entry` event), if it's
+        still on file. A no-op, not an error, if it's already gone (e.g.
+        raced with it aging out). Ignored entirely unless this client is
+        currently granted - see the protocol description.
+      </description>
+      <arg name="id" type="uint"/>
+    </request>
+
+    <request name="remove_all">
+      <description summary="clear the entire history">
+        Removes every entry currently on file. Ignored entirely unless
+        this client is currently granted - see the protocol description.
+      </description>
+    </request>
+
+    <request name="receive">
+      <description summary="read one entry's full content">
+        Asks that entry `id`'s content (in the wire format the accompanying
+        `entry` event's `mime_types` promised) be written to `fd`, which
+        this client should have already set up as the write end of a pipe,
+        the same way `wl_data_offer.receive` works - close `fd`'s read end
+        only after this compositor closes the write end (end of data).
+        `mime_type` must be one of the strings `entry`'s `mime_types`
+        listed for this `id`, space-separated - anything else, or an `id`
+        no longer on file, gets `fd` closed immediately with nothing
+        written. Ignored entirely (fd closed unwritten) unless this client
+        is currently granted.
+
+        Entries only ever carry plain text (see the protocol description),
+        so in practice `mime_type` is always the one `text/…` string an
+        `entry` event names - this mirrors `wl_data_offer.receive`'s shape
+        instead of inlining the content into the `entry` event itself
+        because Wayland's own wire protocol caps a single message's size
+        well below what clipboard text can reach.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="mime_type" type="string"/>
+      <arg name="fd" type="fd"/>
+    </request>
+
+    <event name="entry">
+      <description summary="an entry was captured, or is being reported at bind time">
+        Sent once per entry already on file immediately after a granted
+        bind (oldest first), and again every time a new clipboard change
+        is captured or an unchanged one is copied again (in which case
+        `id` matches a previously-sent one - a client should treat this as
+        "move this id to the most-recent position", not a second entry).
+        `mime_types` is every mime type the original copy offered,
+        space-separated; `preview` is the captured text, truncated to a
+        short length for display - use `receive` for the full content.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="mime_types" type="string"/>
+      <arg name="preview" type="string"/>
+    </event>
+
+    <event name="removed">
+      <description summary="an entry was removed">
+        Sent after `id` is removed - by this client's own `remove`, another
+        granted client's, or the entry aging out past the history size
+        limit. Not sent as part of `remove_all` (see `cleared`).
+      </description>
+      <arg name="id" type="uint"/>
+    </event>
+
+    <event name="cleared">
+      <description summary="the entire history was cleared">
+        Sent after any granted client's `remove_all` request, instead of
+        one `removed` event per entry.
+      </description>
+    </event>
+
+    <event name="denied">
+      <description summary="this client's access request was denied">
+        Sent once, if the user denies the on-screen prompt shown for this
+        client's executable (see the protocol description) - or
+        immediately on bind if that executable was already denied from an
+        earlier prompt this compositor session. No `entry` events will
+        follow; `remove`/`remove_all`/`receive` remain no-ops.
+      </description>
+    </event>
+  </interface>
+</protocol>

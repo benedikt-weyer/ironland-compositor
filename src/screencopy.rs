@@ -161,7 +161,7 @@ impl ScreencopyState {
 
     /// Records a decision for `subject`, for the rest of this compositor
     /// process's lifetime (see the module doc). Called back via
-    /// `PermissionPromptHandler::capture_grant_resolved` once the user
+    /// `PermissionPromptHandler::internal_prompt_resolved` once the user
     /// answers a prompt [`PermissionPromptManagerState::queue_internal`]
     /// queued (see `crate::state`'s impl of that trait).
     ///

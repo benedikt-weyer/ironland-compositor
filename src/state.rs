@@ -121,10 +121,10 @@ use crate::{
     focus::{KeyboardFocusTarget, PointerFocusTarget},
     shell::WindowElement,
 };
+use smithay::wayland::selection::{SelectionSource, SelectionTarget};
 #[cfg(feature = "xwayland")]
 use smithay::{
     utils::Size,
-    wayland::selection::{SelectionSource, SelectionTarget},
     wayland::xwayland_keyboard_grab::{XWaylandKeyboardGrabHandler, XWaylandKeyboardGrabState},
     wayland::xwayland_shell,
     xwayland::{X11Wm, XWayland, XWaylandEvent},
@@ -142,8 +142,11 @@ pub struct ClientState {
     /// a spoofed system permission dialog.
     pub capture_privileged: bool,
     /// This client's resolved executable identity (see
-    /// `crate::screencopy::client_identity`), for the capture permission
-    /// gate. Resolved exactly once, immediately after the client connects
+    /// `crate::screencopy::client_identity`), for the capture and
+    /// clipboard-history permission gates (`crate::screencopy`,
+    /// `crate::clipboard`) - both key their in-memory grant tables on this
+    /// same identity. Resolved exactly once, immediately after the client
+    /// connects
     /// (see `insert_client_with_identity`) - *not* lazily on first capture
     /// attempt, which could be arbitrarily later. `SO_PEERCRED` credentials
     /// are frozen by the kernel at connect time and can't be spoofed, but
@@ -230,6 +233,9 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     pub screencopy: crate::screencopy::ScreencopyState,
     pub permission_prompt: crate::permission_prompt::PermissionPromptManagerState,
     pub capture_permissions: crate::capture_permissions::CapturePermissionsState,
+    /// Captured clipboard history and its grant table; see
+    /// `crate::clipboard`.
+    pub clipboard_history: crate::clipboard::ClipboardHistoryState,
     /// Name of the second, privileged Wayland socket that gates
     /// `ironland-permission-prompt-v1` and `ironland-capture-permissions-
     /// v1` (see `crate::screencopy`'s module doc - screen capture itself
@@ -435,16 +441,20 @@ impl<BackendData: Backend> OutputHandler for AnvilState<BackendData> {}
 impl<BackendData: Backend> SelectionHandler for AnvilState<BackendData> {
     type SelectionUserData = ();
 
-    #[cfg(feature = "xwayland")]
-    fn new_selection(
-        &mut self,
-        ty: SelectionTarget,
-        source: Option<SelectionSource>,
-        _seat: Seat<Self>,
-    ) {
+    fn new_selection(&mut self, ty: SelectionTarget, source: Option<SelectionSource>, seat: Seat<Self>) {
+        #[cfg(feature = "xwayland")]
         if let Some(xwm) = self.xwm.as_mut() {
-            if let Err(err) = xwm.new_selection(ty, source.map(|source| source.mime_types())) {
+            if let Err(err) = xwm.new_selection(ty, source.as_ref().map(|source| source.mime_types())) {
                 warn!(?err, ?ty, "Failed to set Xwayland selection");
+            }
+        }
+
+        // Clipboard-history capture (see `crate::clipboard`'s module doc)
+        // cares only about the clipboard, not the primary selection, and
+        // only about an actual client source, not it being cleared.
+        if ty == SelectionTarget::Clipboard {
+            if let Some(source) = &source {
+                crate::clipboard::capture(&self.handle.clone(), &seat, source);
             }
         }
     }
@@ -857,8 +867,11 @@ impl<BackendData: Backend> ImageCopyCaptureHandler for AnvilState<BackendData> {
                 return;
             }
             None => {
-                self.permission_prompt
-                    .queue_internal(subject, "capture your screen".to_string());
+                self.permission_prompt.queue_internal(
+                    crate::permission_prompt::PromptKind::Capture,
+                    subject,
+                    "capture your screen".to_string(),
+                );
                 frame.fail(CaptureFailureReason::Unknown);
                 return;
             }
@@ -889,9 +902,21 @@ impl<BackendData: Backend> crate::permission_prompt::PermissionPromptHandler for
         &mut self.permission_prompt
     }
 
-    fn capture_grant_resolved(&mut self, subject: String, allowed: bool) {
-        use crate::capture_permissions::CapturePermissionsHandler;
-        self.set_capture_grant(subject, allowed);
+    fn internal_prompt_resolved(
+        &mut self,
+        kind: crate::permission_prompt::PromptKind,
+        subject: String,
+        allowed: bool,
+    ) {
+        match kind {
+            crate::permission_prompt::PromptKind::Capture => {
+                use crate::capture_permissions::CapturePermissionsHandler;
+                self.set_capture_grant(subject, allowed);
+            }
+            crate::permission_prompt::PromptKind::ClipboardHistory => {
+                crate::clipboard::resolve_grant(self, subject, allowed);
+            }
+        }
     }
 }
 
@@ -913,6 +938,20 @@ impl<BackendData: Backend> crate::capture_permissions::CapturePermissionsHandler
         if self.screencopy.forget_grant(subject) {
             crate::capture_permissions::sync_removed(self, subject);
         }
+    }
+}
+
+impl<BackendData: Backend> crate::clipboard::ClipboardHistoryHandler for AnvilState<BackendData> {
+    fn clipboard_history_state(&mut self) -> &mut crate::clipboard::ClipboardHistoryState {
+        &mut self.clipboard_history
+    }
+
+    fn clipboard_client_identity(&self, client: &Client) -> String {
+        client
+            .get_data::<ClientState>()
+            .and_then(|data| data.capture_identity.get())
+            .cloned()
+            .unwrap_or_else(|| "an unidentified application".to_string())
     }
 }
 
@@ -1081,6 +1120,10 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         // it's no less sensitive than the prompt itself.
         let capture_permissions =
             crate::capture_permissions::CapturePermissionsState::new::<Self, _>(&dh, capture_privileged);
+        // Unrestricted, unlike the two above - see `crate::clipboard`'s
+        // module doc: binding this alone reveals nothing, access to actual
+        // history content is gated per-executable instead.
+        let clipboard_history = crate::clipboard::ClipboardHistoryState::new::<Self>(&dh);
 
         // init input
         let seat_name = backend_data.seat_name();
@@ -1137,6 +1180,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             screencopy: crate::screencopy::ScreencopyState::default(),
             permission_prompt,
             capture_permissions,
+            clipboard_history,
             capture_socket_name,
             dnd_icon: None,
             suppressed_keys: Vec::new(),

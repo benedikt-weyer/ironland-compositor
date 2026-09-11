@@ -10,9 +10,11 @@
 //!   waits on the returned object's `allowed`/`denied` event.
 //! - **Internal**: the compositor itself queues one via
 //!   [`PermissionPromptManagerState::queue_internal`], with no requester
-//!   object at all - see `crate::screencopy`'s module doc for its one
-//!   caller (gating direct, non-portal screen capture). Resolving one of
-//!   these calls back via [`PermissionPromptHandler::capture_grant_resolved`]
+//!   object at all - tagged with a [`PromptKind`] so [`PermissionPromptHandler::internal_prompt_resolved`]
+//!   knows which in-memory grant table (`crate::screencopy`'s, gating
+//!   direct non-portal screen capture, or `crate::clipboard`'s, gating
+//!   clipboard-history access) the answer belongs to. Resolving one of
+//!   these calls back via [`PermissionPromptHandler::internal_prompt_resolved`]
 //!   instead of firing a protocol event.
 //!
 //! Separately, a privileged *renderer* client (in practice, this
@@ -55,19 +57,34 @@ pub trait PermissionPromptHandler: 'static {
 
     /// Called when an internally-queued prompt (see
     /// [`PermissionPromptManagerState::queue_internal`]) is resolved, with
-    /// the same `subject` it was queued under. There's no requester object
-    /// to notify for these, unlike wire-requested prompts, so this is the
-    /// only way to learn the answer.
-    fn capture_grant_resolved(&mut self, subject: String, allowed: bool) {
-        let _ = (subject, allowed);
+    /// the same `kind`/`subject` it was queued under. There's no requester
+    /// object to notify for these, unlike wire-requested prompts, so this is
+    /// the only way to learn the answer.
+    fn internal_prompt_resolved(&mut self, kind: PromptKind, subject: String, allowed: bool) {
+        let _ = (kind, subject, allowed);
     }
+}
+
+/// Which in-memory grant table an internally-queued prompt (see
+/// [`PermissionPromptManagerState::queue_internal`]) belongs to - carried
+/// through to [`PermissionPromptHandler::internal_prompt_resolved`] so the
+/// one shared prompt queue can back more than one such table without them
+/// interfering (in particular, so a still-pending prompt for one table
+/// doesn't dedupe-suppress a same-named subject's prompt for another).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptKind {
+    /// Gates `crate::screencopy`'s direct, non-portal screen-capture grant
+    /// table.
+    Capture,
+    /// Gates `crate::clipboard`'s clipboard-history access grant table.
+    ClipboardHistory,
 }
 
 /// Who resolving a [`PendingPrompt`] notifies - see the module doc.
 #[derive(Debug)]
 enum PromptTarget {
     Requester(IronlandPermissionPromptV1),
-    Internal,
+    Internal(PromptKind),
 }
 
 #[derive(Debug)]
@@ -79,7 +96,7 @@ struct PendingPrompt {
     /// For a wire-requested prompt, the requesting `app_id` as chosen by
     /// the (trusted) requester. For an internal one (see
     /// [`PromptTarget::Internal`]), doubles as the subject
-    /// [`PermissionPromptHandler::capture_grant_resolved`] is called back
+    /// [`PermissionPromptHandler::internal_prompt_resolved`] is called back
     /// with - see [`PermissionPromptManagerState::queue_internal`].
     app_id: String,
     reason: String,
@@ -146,15 +163,14 @@ impl PermissionPromptManagerState {
 
     /// Queues a prompt with no wire requester behind it - see
     /// [`PromptTarget::Internal`] and the module doc. A no-op if `subject`
-    /// already has an internal prompt in flight, so a storm of requests
-    /// from the same still-undecided caller (e.g. repeated capture
-    /// attempts - see `crate::screencopy`) doesn't queue a prompt per
-    /// attempt.
-    pub fn queue_internal(&mut self, subject: String, reason: String) {
-        let already_queued = self
-            .queue
-            .iter()
-            .any(|p| matches!(p.target, PromptTarget::Internal) && p.app_id == subject);
+    /// already has an internal prompt of the same `kind` in flight, so a
+    /// storm of requests from the same still-undecided caller (e.g.
+    /// repeated capture attempts - see `crate::screencopy`) doesn't queue a
+    /// prompt per attempt.
+    pub fn queue_internal(&mut self, kind: PromptKind, subject: String, reason: String) {
+        let already_queued = self.queue.iter().any(
+            |p| matches!(p.target, PromptTarget::Internal(k) if k == kind) && p.app_id == subject,
+        );
         if already_queued {
             return;
         }
@@ -169,7 +185,7 @@ impl PermissionPromptManagerState {
             id: prompt_id,
             app_id: subject,
             reason,
-            target: PromptTarget::Internal,
+            target: PromptTarget::Internal(kind),
         });
     }
 
@@ -236,7 +252,7 @@ impl PermissionPromptManagerState {
 /// Notifies `prompt`'s target of `allow` - firing a protocol event for a
 /// wire-requested prompt, or calling back into `state` for an internal one.
 /// A free function (rather than a method) so it can reach
-/// [`PermissionPromptHandler::capture_grant_resolved`] on `state`.
+/// [`PermissionPromptHandler::internal_prompt_resolved`] on `state`.
 fn send_answer<D: PermissionPromptHandler>(state: &mut D, prompt: PendingPrompt, allow: bool) {
     match prompt.target {
         PromptTarget::Requester(resource) => {
@@ -246,7 +262,7 @@ fn send_answer<D: PermissionPromptHandler>(state: &mut D, prompt: PendingPrompt,
                 resource.denied();
             }
         }
-        PromptTarget::Internal => state.capture_grant_resolved(prompt.app_id, allow),
+        PromptTarget::Internal(kind) => state.internal_prompt_resolved(kind, prompt.app_id, allow),
     }
 }
 

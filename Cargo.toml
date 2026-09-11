@@ -55,8 +55,10 @@ rand = "0.8"
 # Pinned to the same major version wayland-backend (a smithay dependency)
 # already pulls in transitively, so this is the same compiled instance, not
 # a second copy. Used directly (not just through smithay) for
-# `pidfd_open` - see `crate::screencopy::client_identity`.
-rustix = { version = "1.1", default-features = false, features = ["std", "process"] }
+# `pidfd_open` - see `crate::screencopy::client_identity` - and for the
+# non-blocking pipe `crate::clipboard` reads captured clipboard content
+# through.
+rustix = { version = "1.1", default-features = false, features = ["std", "process", "pipe"] }
 tracing = { version = "0.1.37", features = ["max_level_trace", "release_max_level_debug"] }
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 thiserror = "1"
