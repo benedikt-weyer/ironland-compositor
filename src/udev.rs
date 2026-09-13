@@ -596,13 +596,7 @@ pub fn run_udev() {
     }
 
     // init dmabuf support with format list from our primary gpu
-    let primary_is_nvidia = state
-        .backend_data
-        .backends
-        .get(&primary_gpu)
-        .and_then(|backend| drm_driver_is_nvidia(backend.drm_output_manager.device()))
-        .unwrap_or(false);
-    let dmabuf_formats = restrict_sampling_formats(renderer.dmabuf_formats(), primary_is_nvidia);
+    let dmabuf_formats = renderer.dmabuf_formats();
     let default_feedback = DmabufFeedbackBuilder::new(primary_gpu.dev_id(), dmabuf_formats)
         .build()
         .unwrap();
@@ -619,7 +613,6 @@ pub fn run_udev() {
         .backends
         .iter_mut()
         .for_each(|(node, backend_data)| {
-            let is_nvidia = drm_driver_is_nvidia(backend_data.drm_output_manager.device()).unwrap_or(false);
             // Update the per drm surface dmabuf feedback
             backend_data.surfaces.values_mut().for_each(|surface_data| {
                 surface_data.dmabuf_feedback = surface_data.dmabuf_feedback.take().or_else(|| {
@@ -630,7 +623,6 @@ pub fn run_udev() {
                             *node,
                             gpus,
                             compositor.surface(),
-                            is_nvidia,
                         )
                     })
                 });
@@ -881,51 +873,16 @@ enum DeviceAddError {
     PrimaryGpuMissing,
 }
 
-fn drm_driver_is_nvidia(drm_device: &DrmDevice) -> Option<bool> {
-    let driver = drm_device.get_driver().ok()?;
-    Some(
-        driver.name().to_string_lossy().to_lowercase().contains("nvidia")
-            || driver
-                .description()
-                .to_string_lossy()
-                .to_lowercase()
-                .contains("nvidia"),
-    )
-}
-
-// NVIDIA's proprietary driver advertises tiled (non-linear) modifiers as
-// importable for GL sampling, but Smithay's GLES renderer reads them back as
-// solid black - only LINEAR reliably samples correctly. Direct KMS scanout
-// is unaffected (it doesn't go through GL), so this only needs to trim the
-// formats offered for the render/composite path.
-fn restrict_sampling_formats(formats: FormatSet, restrict_to_linear: bool) -> FormatSet {
-    if !restrict_to_linear {
-        return formats;
-    }
-    formats
-        .iter()
-        .filter(|format| format.modifier == Modifier::Linear)
-        .copied()
-        .collect()
-}
-
 fn get_surface_dmabuf_feedback(
     primary_gpu: DrmNode,
     render_node: Option<DrmNode>,
     scanout_node: DrmNode,
     gpus: &mut GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
     surface: &DrmSurface,
-    restrict_sampling_to_linear: bool,
 ) -> Option<SurfaceDmabufFeedback> {
-    let primary_formats = restrict_sampling_formats(
-        gpus.single_renderer(&primary_gpu).ok()?.dmabuf_formats(),
-        restrict_sampling_to_linear,
-    );
+    let primary_formats = gpus.single_renderer(&primary_gpu).ok()?.dmabuf_formats();
     let render_formats = if let Some(render_node) = render_node {
-        restrict_sampling_formats(
-            gpus.single_renderer(&render_node).ok()?.dmabuf_formats(),
-            restrict_sampling_to_linear,
-        )
+        gpus.single_renderer(&render_node).ok()?.dmabuf_formats()
     } else {
         FormatSet::default()
     };
@@ -1273,9 +1230,12 @@ impl AnvilState<UdevData> {
             #[cfg(feature = "debug")]
             let fps_element = self.backend_data.fps_texture.clone().map(FpsElement::new);
 
-            let Some(is_nvidia) = drm_driver_is_nvidia(drm_device) else {
-                warn!("Failed to query drm driver");
-                return;
+            let driver = match drm_device.get_driver() {
+                Ok(driver) => driver,
+                Err(err) => {
+                    warn!("Failed to query drm driver: {}", err);
+                    return;
+                }
             };
 
             let mut planes = match drm_device.planes(&crtc) {
@@ -1287,7 +1247,17 @@ impl AnvilState<UdevData> {
             };
 
             // Using an overlay plane on a nvidia card breaks
-            if is_nvidia {
+            if driver
+                .name()
+                .to_string_lossy()
+                .to_lowercase()
+                .contains("nvidia")
+                || driver
+                    .description()
+                    .to_string_lossy()
+                    .to_lowercase()
+                    .contains("nvidia")
+            {
                 planes.overlay = vec![];
             }
 
@@ -1321,7 +1291,6 @@ impl AnvilState<UdevData> {
                     node,
                     &mut self.backend_data.gpus,
                     compositor.surface(),
-                    is_nvidia,
                 )
             });
 
