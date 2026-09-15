@@ -91,18 +91,23 @@ impl TilingLayout {
     /// Insert `window`, splitting the leaf for `target` (or the last-touched
     /// leaf, or an arbitrary leaf) in half.
     pub fn insert(&mut self, window: WindowElement, area: Rectangle<i32, Logical>, target: Option<&WindowElement>) {
-        self.last = Some(window.clone());
-
         let Some(root) = self.root.take() else {
-            self.root = Some(Node::Leaf(window));
+            self.root = Some(Node::Leaf(window.clone()));
+            self.last = Some(window);
             return;
         };
 
+        // Resolve the split target against the *previous* `last` - it must
+        // not be overwritten with `window` before this, or a `None` target
+        // on a non-empty tree would try to split `window` against itself,
+        // which isn't in the tree yet, silently dropping it (`replace_leaf`
+        // finds no matching leaf and hands the tree back unchanged).
         let target = target
             .filter(|t| Self::tree_contains(&root, t))
             .cloned()
             .or_else(|| self.last.clone())
             .unwrap_or_else(|| Self::first_leaf(&root).clone());
+        self.last = Some(window.clone());
 
         // Gap doesn't matter for this orientation heuristic (only which
         // dimension is larger), so 0 avoids threading config through insert().
