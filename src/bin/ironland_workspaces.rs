@@ -31,8 +31,12 @@
 //! `ironland-workspace-windows-v1` (see the `windows` field above), and
 //! matches the target window the same best-effort way that field does.
 //!
-//! Unknown/malformed lines and commands naming an output or index that
-//! doesn't currently exist are silently ignored.
+//! Unknown/malformed lines and commands naming an output that doesn't
+//! currently exist are silently ignored. An `activate` naming an index one
+//! past the last known workspace on its output requests a new trailing
+//! workspace (`ext_workspace_group_handle_v1.create_workspace`) and
+//! activates it instead - a no-op compositor-side unless `workspaces.dynamic`
+//! is set - and any other out-of-range index is ignored.
 //!
 //! Known limitation: outputs that connect *after* this process starts won't
 //! be picked up, since `wl_output` globals are only bound once at startup
@@ -211,10 +215,18 @@ impl App {
                 else {
                     return;
                 };
-                let Some(workspace) = group.workspaces.iter().find(|w| w.index == index) else {
+                if let Some(workspace) = group.workspaces.iter().find(|w| w.index == index) {
+                    workspace.handle.activate();
+                } else if index == group.workspaces.len() {
+                    // One past the last known workspace: there's no handle
+                    // to activate yet, so ask the compositor to grow the
+                    // output by one trailing workspace and activate it (see
+                    // `ext_workspace::create_workspace` server-side; a no-op
+                    // there unless `workspaces.dynamic` is set).
+                    group.handle.create_workspace((index + 1).to_string());
+                } else {
                     return;
-                };
-                workspace.handle.activate();
+                }
                 if let Some(manager) = &self.manager {
                     manager.commit();
                 }

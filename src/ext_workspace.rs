@@ -7,13 +7,20 @@
 //!
 //! One [`ExtWorkspaceGroupHandleV1`] is advertised per output, containing
 //! that output's workspaces (named "1", "2", ... in index order) as
-//! [`ExtWorkspaceHandleV1`] objects. Only the `active` state and the
-//! `activate` request are implemented - workspaces are never hidden/urgent,
-//! and creating/removing/reassigning workspaces from the client side isn't
-//! supported (the compositor already grows/prunes them on its own, see
-//! `shell::workspace`'s module docs), so those capability bits are left
-//! unset and their requests are ignored, per the protocol's own contract for
-//! unadvertised capabilities.
+//! [`ExtWorkspaceHandleV1`] objects. The `active` state and the `activate`
+//! request are implemented for every workspace; workspaces are never
+//! hidden/urgent, and removing/reassigning them from the client side isn't
+//! supported, so those capability bits stay unset and their requests are
+//! ignored, per the protocol's own contract for unadvertised capabilities.
+//!
+//! `create_workspace` on the group *is* implemented, but only to let a
+//! client grow the trailing edge by exactly one and switch to it in a single
+//! request - matching the one-past-the-end growth `shell::workspace`
+//! already does for keybinding-driven switches when `workspaces.dynamic` is
+//! set (see [`WorkspaceManagerHandler::create_workspace`]). The
+//! `CreateWorkspace` capability bit (and thus the request) is only
+//! advertised while `workspaces.dynamic` is enabled; a conforming client
+//! won't send it otherwise, and the compositor ignores it too if one does.
 //!
 //! [`sync`] is the single entry point: call it after any change to
 //! workspace count, active index, or the output set, and it brings every
@@ -58,6 +65,14 @@ pub trait WorkspaceManagerHandler: 'static {
     /// Handle a client's `ext_workspace_handle_v1.activate` request for the
     /// workspace at `index` on `output`.
     fn activate_workspace(&mut self, output: &Output, index: usize);
+    /// Handle a client's `ext_workspace_group_handle_v1.create_workspace`
+    /// request for `output`. A no-op unless `workspaces.dynamic` is set
+    /// (matching the unset `CreateWorkspace` capability bit in that case,
+    /// for a client that sends it anyway); otherwise grows `output` by one
+    /// trailing workspace and activates it, the same one-past-the-end growth
+    /// `shell::workspace`'s internal `set_active` already does for
+    /// keybinding-driven switches.
+    fn create_workspace(&mut self, output: &Output);
 }
 
 impl<B: Backend> WorkspaceManagerHandler for AnvilState<B> {
@@ -67,6 +82,15 @@ impl<B: Backend> WorkspaceManagerHandler for AnvilState<B> {
 
     fn activate_workspace(&mut self, output: &Output, index: usize) {
         crate::shell::workspace::activate_workspace(self, output, index);
+        ext_workspace_sync(self);
+    }
+
+    fn create_workspace(&mut self, output: &Output) {
+        if !self.config.workspaces.dynamic {
+            return;
+        }
+        let count = WorkspaceState::get(output).count();
+        crate::shell::workspace::activate_workspace(self, output, count);
         ext_workspace_sync(self);
     }
 }
@@ -130,11 +154,9 @@ pub struct ManagerGlobalData;
 #[derive(Debug)]
 pub struct ManagerToken;
 
-/// User data attached to a `ext_workspace_group_handle_v1` resource. Not
-/// currently read (its requests are all ignored), but kept for parity with
-/// [`WorkspaceData`] and in case a future request needs it.
+/// User data attached to a `ext_workspace_group_handle_v1` resource -
+/// `output` is read by the `create_workspace` request handler.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct GroupData {
     output: Output,
 }
@@ -160,13 +182,14 @@ where
 {
     let dh = state.display_handle();
     let outputs = state.workspace_outputs();
+    let dynamic = state.workspaces_dynamic();
     let proto = state.workspace_manager_state();
 
     for instance in &mut proto.instances {
         let Ok(client) = dh.get_client(instance.manager.id()) else {
             continue;
         };
-        sync_instance::<D>(&dh, &client, instance, &outputs);
+        sync_instance::<D>(&dh, &client, instance, &outputs, dynamic);
         instance.manager.done();
     }
 
@@ -189,6 +212,7 @@ fn sync_instance<D>(
     client: &Client,
     instance: &mut Instance,
     outputs: &[(Output, usize, usize)],
+    dynamic: bool,
 ) where
     D: WorkspaceManagerHandler
         + Dispatch<ExtWorkspaceManagerV1, ManagerToken>
@@ -219,7 +243,6 @@ fn sync_instance<D>(
                     continue;
                 };
                 instance.manager.workspace_group(&resource);
-                resource.capabilities(GroupCapabilities::empty());
                 for wl_output in output.client_outputs(client) {
                     resource.output_enter(&wl_output);
                 }
@@ -231,6 +254,14 @@ fn sync_instance<D>(
                 instance.groups.last_mut().unwrap()
             }
         };
+        // Resent every pass (harmless if redundant, per this module's doc
+        // comment) so a live `workspaces.dynamic` config change is reflected
+        // even for a group that was already bound.
+        group.resource.capabilities(if dynamic {
+            GroupCapabilities::CreateWorkspace
+        } else {
+            GroupCapabilities::empty()
+        });
 
         // Drop trailing workspaces the output pruned.
         while group.workspaces.len() > *count {
@@ -277,6 +308,10 @@ pub trait AsOutputsAndDisplay {
     fn display_handle(&self) -> DisplayHandle;
     /// `(output, active workspace index, workspace count)` for every output.
     fn workspace_outputs(&self) -> Vec<(Output, usize, usize)>;
+    /// Whether `workspaces.dynamic` is currently enabled - drives the
+    /// `CreateWorkspace` group capability bit (see
+    /// [`WorkspaceManagerHandler::create_workspace`]).
+    fn workspaces_dynamic(&self) -> bool;
 }
 
 impl<B: Backend> AsOutputsAndDisplay for AnvilState<B> {
@@ -292,6 +327,10 @@ impl<B: Backend> AsOutputsAndDisplay for AnvilState<B> {
                 (o.clone(), ws.active(), ws.count())
             })
             .collect()
+    }
+
+    fn workspaces_dynamic(&self) -> bool {
+        self.config.workspaces.dynamic
     }
 }
 
@@ -317,7 +356,8 @@ where
             groups: Vec::new(),
         };
         let outputs = state.workspace_outputs();
-        sync_instance::<D>(dh, client, &mut instance, &outputs);
+        let dynamic = state.workspaces_dynamic();
+        sync_instance::<D>(dh, client, &mut instance, &outputs, dynamic);
         instance.manager.done();
         state.workspace_manager_state().instances.push(instance);
     }
@@ -354,7 +394,7 @@ impl<D: WorkspaceManagerHandler> Dispatch2<ExtWorkspaceManagerV1, D> for Manager
 impl<D: WorkspaceManagerHandler> Dispatch2<ExtWorkspaceGroupHandleV1, D> for GroupData {
     fn request(
         &self,
-        _state: &mut D,
+        state: &mut D,
         _client: &Client,
         _group: &ExtWorkspaceGroupHandleV1,
         request: smithay::reexports::wayland_protocols::ext::workspace::v1::server::ext_workspace_group_handle_v1::Request,
@@ -363,8 +403,7 @@ impl<D: WorkspaceManagerHandler> Dispatch2<ExtWorkspaceGroupHandleV1, D> for Gro
     ) {
         use smithay::reexports::wayland_protocols::ext::workspace::v1::server::ext_workspace_group_handle_v1::Request as GroupRequest;
         match request {
-            // Not advertised in `capabilities`, so ignored per protocol.
-            GroupRequest::CreateWorkspace { .. } => {}
+            GroupRequest::CreateWorkspace { .. } => state.create_workspace(&self.output),
             GroupRequest::Destroy => {}
             _ => {}
         }
