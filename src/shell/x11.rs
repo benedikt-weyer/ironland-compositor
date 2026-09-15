@@ -43,7 +43,7 @@ use crate::{AnvilState, focus::KeyboardFocusTarget, state::Backend};
 
 use super::{
     FullscreenSurface, PointerMoveSurfaceGrab, PointerResizeSurfaceGrab, ResizeData, ResizeState,
-    SurfaceData, TouchMoveSurfaceGrab, WindowElement, place_new_window, tiling, workspace,
+    SurfaceData, TiledResizeGrab, TouchMoveSurfaceGrab, WindowElement, place_new_window, tiling, workspace,
 };
 
 #[derive(Debug, Default)]
@@ -264,6 +264,22 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
         else {
             return;
         };
+
+        // A tiled window is resized in place - its dragged edge pushes the
+        // tiling tree's border rather than pulling the window out into
+        // floating. See `shell::xdg::XdgShellHandler::resize_request`.
+        if let Some((output, workspace_idx)) = tiling::locate(self, element) {
+            let grab = TiledResizeGrab {
+                start_data,
+                window: element.clone(),
+                edges: edges.into(),
+                output,
+                workspace_idx,
+            };
+            let pointer = self.pointer.clone();
+            pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Clear);
+            return;
+        }
 
         let geometry = element.geometry();
         let loc = self.space.element_location(element).unwrap();

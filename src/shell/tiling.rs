@@ -339,6 +339,38 @@ impl TilingLayout {
         out
     }
 
+    /// Split `area` into the two child areas a split with this orientation/ratio/gap
+    /// produces. Shared by [`Self::layout_rec`] (rendering) and
+    /// [`Self::resize_border`] (interactively dragging a split's border) so
+    /// the two always agree on where a border actually sits on screen.
+    fn split_areas(
+        area: Rectangle<i32, Logical>,
+        vertical: bool,
+        ratio: f32,
+        gap: i32,
+    ) -> (Rectangle<i32, Logical>, Rectangle<i32, Logical>) {
+        let half_gap = gap / 2;
+        if vertical {
+            let wa = ((area.size.w as f32) * ratio) as i32;
+            (
+                Rectangle::new(area.loc, (wa - half_gap, area.size.h).into()),
+                Rectangle::new(
+                    Point::from((area.loc.x + wa + half_gap, area.loc.y)),
+                    (area.size.w - wa - half_gap, area.size.h).into(),
+                ),
+            )
+        } else {
+            let ha = ((area.size.h as f32) * ratio) as i32;
+            (
+                Rectangle::new(area.loc, (area.size.w, ha - half_gap).into()),
+                Rectangle::new(
+                    Point::from((area.loc.x, area.loc.y + ha + half_gap)),
+                    (area.size.w, area.size.h - ha - half_gap).into(),
+                ),
+            )
+        }
+    }
+
     fn layout_rec(
         node: &Node,
         area: Rectangle<i32, Logical>,
@@ -348,30 +380,85 @@ impl TilingLayout {
         match node {
             Node::Leaf(w) => out.push((w.clone(), area)),
             Node::Split { vertical, ratio, a, b } => {
-                let half_gap = gap / 2;
-                if *vertical {
-                    let wa = ((area.size.w as f32) * ratio) as i32;
-                    let area_a =
-                        Rectangle::new(area.loc, (wa - half_gap, area.size.h).into());
-                    let area_b = Rectangle::new(
-                        Point::from((area.loc.x + wa + half_gap, area.loc.y)),
-                        (area.size.w - wa - half_gap, area.size.h).into(),
-                    );
-                    Self::layout_rec(a, area_a, gap, out);
-                    Self::layout_rec(b, area_b, gap, out);
-                } else {
-                    let ha = ((area.size.h as f32) * ratio) as i32;
-                    let area_a =
-                        Rectangle::new(area.loc, (area.size.w, ha - half_gap).into());
-                    let area_b = Rectangle::new(
-                        Point::from((area.loc.x, area.loc.y + ha + half_gap)),
-                        (area.size.w, area.size.h - ha - half_gap).into(),
-                    );
-                    Self::layout_rec(a, area_a, gap, out);
-                    Self::layout_rec(b, area_b, gap, out);
+                let (area_a, area_b) = Self::split_areas(area, *vertical, *ratio, gap);
+                Self::layout_rec(a, area_a, gap, out);
+                Self::layout_rec(b, area_b, gap, out);
+            }
+        }
+    }
+
+    /// Live-drag the border of the nearest ancestor split of `vertical`
+    /// orientation whose border actually touches the edge being dragged -
+    /// the split where `window` sits on the `want_a` side (`true` = the
+    /// left/top `a` side, whose *far* edge is the border; `false` = the
+    /// right/bottom `b` side, whose *near* edge is the border). Splits of
+    /// matching orientation where `window` sits on the other side are
+    /// skipped over (their border is the *other* edge of `window`, not this
+    /// one) rather than stopping the search, so it walks out through the
+    /// tree until it finds the split this edge is actually shared with.
+    ///
+    /// `coord` is the pointer's position along the resized axis (x for a
+    /// vertical split, y for horizontal); `area`/`gap` must match whatever
+    /// [`Self::layout`] was last called with. Returns `false` (changing
+    /// nothing) if no such split exists - the dragged edge faces the output
+    /// boundary rather than a sibling tile, so there is nothing to push.
+    pub fn resize_border(
+        &mut self,
+        window: &WindowElement,
+        vertical: bool,
+        want_a: bool,
+        area: Rectangle<i32, Logical>,
+        gap: i32,
+        coord: f64,
+    ) -> bool {
+        fn walk(
+            node: &mut Node,
+            area: Rectangle<i32, Logical>,
+            gap: i32,
+            target: &WindowElement,
+            vertical: bool,
+            want_a: bool,
+            coord: f64,
+        ) -> (bool, bool) {
+            match node {
+                Node::Leaf(w) => (&*w == target, false),
+                Node::Split { vertical: v, ratio, a, b } => {
+                    let (area_a, area_b) = TilingLayout::split_areas(area, *v, *ratio, gap);
+                    let (in_a, done_a) = walk(a, area_a, gap, target, vertical, want_a, coord);
+                    if in_a {
+                        if !done_a && *v == vertical && want_a {
+                            *ratio = TilingLayout::border_ratio(area, vertical, coord);
+                            return (true, true);
+                        }
+                        return (true, done_a);
+                    }
+                    let (in_b, done_b) = walk(b, area_b, gap, target, vertical, want_a, coord);
+                    if in_b {
+                        if !done_b && *v == vertical && !want_a {
+                            *ratio = TilingLayout::border_ratio(area, vertical, coord);
+                            return (true, true);
+                        }
+                        return (true, done_b);
+                    }
+                    (false, false)
                 }
             }
         }
+        let Some(root) = &mut self.root else {
+            return false;
+        };
+        walk(root, area, gap, window, vertical, want_a, coord).1
+    }
+
+    /// The split ratio that puts the border at `coord` within `area` along
+    /// the resized axis.
+    fn border_ratio(area: Rectangle<i32, Logical>, vertical: bool, coord: f64) -> f32 {
+        let (origin, span) = if vertical {
+            (area.loc.x as f64, area.size.w.max(1) as f64)
+        } else {
+            (area.loc.y as f64, area.size.h.max(1) as f64)
+        };
+        (((coord - origin) / span) as f32).clamp(0.1, 0.9)
     }
 
     fn layout_rec_rect(

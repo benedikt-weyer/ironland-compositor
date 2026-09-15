@@ -936,3 +936,306 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>> for TouchResizeSur
 
     fn unset(&mut self, _data: &mut AnvilState<BackendData>) {}
 }
+
+/// Resizes a *tiled* window in place, like a tiling-WM border drag: instead
+/// of pulling the window out into floating, it live-adjusts the ratio of
+/// whichever split its dragged edge borders (see
+/// [`crate::shell::tiling::TilingLayout::resize_border`]), pushing the
+/// neighbor on the other side of that border so the gap between them stays
+/// constant. An edge with no such split - one that faces the output boundary
+/// rather than a sibling tile - is simply inert: nothing about that axis
+/// ever changes, so releasing the pointer there leaves the window exactly
+/// where it started, which reads as the drag "snapping back".
+pub struct TiledResizeGrab<BackendData: Backend + 'static> {
+    pub start_data: PointerGrabStartData<AnvilState<BackendData>>,
+    pub window: WindowElement,
+    pub edges: ResizeEdge,
+    pub output: smithay::output::Output,
+    pub workspace_idx: usize,
+}
+
+impl<BackendData: Backend> TiledResizeGrab<BackendData> {
+    /// Drag whichever borders `self.edges` touches to `location`, reflowing
+    /// the output if anything moved.
+    fn drag_borders(&self, data: &mut AnvilState<BackendData>, location: Point<f64, Logical>) {
+        if !self.window.alive() {
+            return;
+        }
+        let area = crate::shell::tiling::tiling_area(&data.space, &self.output, data.config.gaps.outer as i32);
+        let gap = data.config.gaps.inner as i32;
+        let mut changed = false;
+        {
+            let mut tree = crate::shell::tiling::TilingState::tree_mut(&self.output, self.workspace_idx);
+            if self.edges.intersects(ResizeEdge::RIGHT) {
+                changed |= tree.resize_border(&self.window, true, true, area, gap, location.x);
+            } else if self.edges.intersects(ResizeEdge::LEFT) {
+                changed |= tree.resize_border(&self.window, true, false, area, gap, location.x);
+            }
+            if self.edges.intersects(ResizeEdge::BOTTOM) {
+                changed |= tree.resize_border(&self.window, false, true, area, gap, location.y);
+            } else if self.edges.intersects(ResizeEdge::TOP) {
+                changed |= tree.resize_border(&self.window, false, false, area, gap, location.y);
+            }
+        }
+        if changed {
+            crate::shell::tiling::apply_layout(data, &self.output);
+        }
+    }
+}
+
+impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>> for TiledResizeGrab<BackendData> {
+    fn motion(
+        &mut self,
+        data: &mut AnvilState<BackendData>,
+        handle: &mut PointerInnerHandle<'_, AnvilState<BackendData>>,
+        _focus: Option<(PointerFocusTarget, Point<f64, Logical>)>,
+        event: &MotionEvent,
+    ) {
+        // While the grab is active, no client has pointer focus
+        handle.motion(data, None, event);
+
+        if !self.window.alive() {
+            handle.unset_grab(self, data, event.serial, event.time, true);
+            return;
+        }
+
+        self.drag_borders(data, event.location);
+    }
+
+    fn relative_motion(
+        &mut self,
+        data: &mut AnvilState<BackendData>,
+        handle: &mut PointerInnerHandle<'_, AnvilState<BackendData>>,
+        focus: Option<(PointerFocusTarget, Point<f64, Logical>)>,
+        event: &RelativeMotionEvent,
+    ) {
+        handle.relative_motion(data, focus, event);
+    }
+
+    fn button(
+        &mut self,
+        data: &mut AnvilState<BackendData>,
+        handle: &mut PointerInnerHandle<'_, AnvilState<BackendData>>,
+        event: &ButtonEvent,
+    ) {
+        handle.button(data, event);
+        if handle.current_pressed().is_empty() {
+            // No more buttons are pressed, release the grab.
+            handle.unset_grab(self, data, event.serial, event.time, true);
+        }
+    }
+
+    fn axis(
+        &mut self,
+        data: &mut AnvilState<BackendData>,
+        handle: &mut PointerInnerHandle<'_, AnvilState<BackendData>>,
+        details: AxisFrame,
+    ) {
+        handle.axis(data, details)
+    }
+
+    fn frame(
+        &mut self,
+        data: &mut AnvilState<BackendData>,
+        handle: &mut PointerInnerHandle<'_, AnvilState<BackendData>>,
+    ) {
+        handle.frame(data);
+    }
+
+    fn gesture_swipe_begin(
+        &mut self,
+        data: &mut AnvilState<BackendData>,
+        handle: &mut PointerInnerHandle<'_, AnvilState<BackendData>>,
+        event: &GestureSwipeBeginEvent,
+    ) {
+        handle.gesture_swipe_begin(data, event);
+    }
+
+    fn gesture_swipe_update(
+        &mut self,
+        data: &mut AnvilState<BackendData>,
+        handle: &mut PointerInnerHandle<'_, AnvilState<BackendData>>,
+        event: &GestureSwipeUpdateEvent,
+    ) {
+        handle.gesture_swipe_update(data, event);
+    }
+
+    fn gesture_swipe_end(
+        &mut self,
+        data: &mut AnvilState<BackendData>,
+        handle: &mut PointerInnerHandle<'_, AnvilState<BackendData>>,
+        event: &GestureSwipeEndEvent,
+    ) {
+        handle.gesture_swipe_end(data, event);
+    }
+
+    fn gesture_pinch_begin(
+        &mut self,
+        data: &mut AnvilState<BackendData>,
+        handle: &mut PointerInnerHandle<'_, AnvilState<BackendData>>,
+        event: &GesturePinchBeginEvent,
+    ) {
+        handle.gesture_pinch_begin(data, event);
+    }
+
+    fn gesture_pinch_update(
+        &mut self,
+        data: &mut AnvilState<BackendData>,
+        handle: &mut PointerInnerHandle<'_, AnvilState<BackendData>>,
+        event: &GesturePinchUpdateEvent,
+    ) {
+        handle.gesture_pinch_update(data, event);
+    }
+
+    fn gesture_pinch_end(
+        &mut self,
+        data: &mut AnvilState<BackendData>,
+        handle: &mut PointerInnerHandle<'_, AnvilState<BackendData>>,
+        event: &GesturePinchEndEvent,
+    ) {
+        handle.gesture_pinch_end(data, event);
+    }
+
+    fn gesture_hold_begin(
+        &mut self,
+        data: &mut AnvilState<BackendData>,
+        handle: &mut PointerInnerHandle<'_, AnvilState<BackendData>>,
+        event: &GestureHoldBeginEvent,
+    ) {
+        handle.gesture_hold_begin(data, event);
+    }
+
+    fn gesture_hold_end(
+        &mut self,
+        data: &mut AnvilState<BackendData>,
+        handle: &mut PointerInnerHandle<'_, AnvilState<BackendData>>,
+        event: &GestureHoldEndEvent,
+    ) {
+        handle.gesture_hold_end(data, event);
+    }
+
+    fn start_data(&self) -> &PointerGrabStartData<AnvilState<BackendData>> {
+        &self.start_data
+    }
+
+    fn unset(&mut self, _data: &mut AnvilState<BackendData>) {}
+}
+
+/// [`TiledResizeGrab`]'s touch counterpart.
+pub struct TiledTouchResizeGrab<BackendData: Backend + 'static> {
+    pub start_data: TouchGrabStartData<AnvilState<BackendData>>,
+    pub window: WindowElement,
+    pub edges: ResizeEdge,
+    pub output: smithay::output::Output,
+    pub workspace_idx: usize,
+}
+
+impl<BackendData: Backend> TiledTouchResizeGrab<BackendData> {
+    /// See [`TiledResizeGrab::drag_borders`].
+    fn drag_borders(&self, data: &mut AnvilState<BackendData>, location: Point<f64, Logical>) {
+        if !self.window.alive() {
+            return;
+        }
+        let area = crate::shell::tiling::tiling_area(&data.space, &self.output, data.config.gaps.outer as i32);
+        let gap = data.config.gaps.inner as i32;
+        let mut changed = false;
+        {
+            let mut tree = crate::shell::tiling::TilingState::tree_mut(&self.output, self.workspace_idx);
+            if self.edges.intersects(ResizeEdge::RIGHT) {
+                changed |= tree.resize_border(&self.window, true, true, area, gap, location.x);
+            } else if self.edges.intersects(ResizeEdge::LEFT) {
+                changed |= tree.resize_border(&self.window, true, false, area, gap, location.x);
+            }
+            if self.edges.intersects(ResizeEdge::BOTTOM) {
+                changed |= tree.resize_border(&self.window, false, true, area, gap, location.y);
+            } else if self.edges.intersects(ResizeEdge::TOP) {
+                changed |= tree.resize_border(&self.window, false, false, area, gap, location.y);
+            }
+        }
+        if changed {
+            crate::shell::tiling::apply_layout(data, &self.output);
+        }
+    }
+}
+
+impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>> for TiledTouchResizeGrab<BackendData> {
+    fn down(
+        &mut self,
+        _data: &mut AnvilState<BackendData>,
+        _handle: &mut smithay::input::touch::TouchInnerHandle<'_, AnvilState<BackendData>>,
+        _focus: Option<(
+            <AnvilState<BackendData> as smithay::input::SeatHandler>::TouchFocus,
+            Point<f64, Logical>,
+        )>,
+        _event: &smithay::input::touch::DownEvent,
+    ) {
+    }
+
+    fn up(
+        &mut self,
+        data: &mut AnvilState<BackendData>,
+        handle: &mut smithay::input::touch::TouchInnerHandle<'_, AnvilState<BackendData>>,
+        event: &smithay::input::touch::UpEvent,
+    ) {
+        if event.slot != self.start_data.slot {
+            return;
+        }
+        handle.unset_grab(self, data);
+    }
+
+    fn motion(
+        &mut self,
+        data: &mut AnvilState<BackendData>,
+        _handle: &mut smithay::input::touch::TouchInnerHandle<'_, AnvilState<BackendData>>,
+        _focus: Option<(
+            <AnvilState<BackendData> as smithay::input::SeatHandler>::TouchFocus,
+            Point<f64, Logical>,
+        )>,
+        event: &smithay::input::touch::MotionEvent,
+    ) {
+        if event.slot != self.start_data.slot {
+            return;
+        }
+        self.drag_borders(data, event.location);
+    }
+
+    fn frame(
+        &mut self,
+        _data: &mut AnvilState<BackendData>,
+        _handle: &mut smithay::input::touch::TouchInnerHandle<'_, AnvilState<BackendData>>,
+    ) {
+    }
+
+    fn cancel(
+        &mut self,
+        data: &mut AnvilState<BackendData>,
+        handle: &mut smithay::input::touch::TouchInnerHandle<'_, AnvilState<BackendData>>,
+    ) {
+        handle.cancel(data);
+        handle.unset_grab(self, data);
+    }
+
+    fn shape(
+        &mut self,
+        data: &mut AnvilState<BackendData>,
+        handle: &mut smithay::input::touch::TouchInnerHandle<'_, AnvilState<BackendData>>,
+        event: &smithay::input::touch::ShapeEvent,
+    ) {
+        handle.shape(data, event);
+    }
+
+    fn orientation(
+        &mut self,
+        data: &mut AnvilState<BackendData>,
+        handle: &mut smithay::input::touch::TouchInnerHandle<'_, AnvilState<BackendData>>,
+        event: &smithay::input::touch::OrientationEvent,
+    ) {
+        handle.orientation(data, event);
+    }
+
+    fn start_data(&self) -> &smithay::input::touch::GrabStartData<AnvilState<BackendData>> {
+        &self.start_data
+    }
+
+    fn unset(&mut self, _data: &mut AnvilState<BackendData>) {}
+}

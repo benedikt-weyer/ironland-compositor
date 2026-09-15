@@ -32,13 +32,13 @@ use tracing::{trace, warn};
 
 use crate::{
     focus::KeyboardFocusTarget,
-    shell::{TouchMoveSurfaceGrab, TouchResizeSurfaceGrab},
+    shell::{TiledTouchResizeGrab, TouchMoveSurfaceGrab, TouchResizeSurfaceGrab},
     state::{AnvilState, Backend},
 };
 
 use super::{
     FullscreenSurface, PointerMoveSurfaceGrab, PointerResizeSurfaceGrab, ResizeData, ResizeEdge, ResizeState,
-    SurfaceData, WindowElement, fullscreen_output_geometry, place_new_window, tiling,
+    SurfaceData, TiledResizeGrab, WindowElement, fullscreen_output_geometry, place_new_window, tiling,
 };
 
 impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
@@ -154,8 +154,20 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
                     return;
                 }
 
-                // Resizing a tiled window pulls it out into floating, like Hyprland.
-                tiling::untile_window(self, &window);
+                // A tiled window is resized in place - its dragged edge
+                // pushes the tiling tree's border rather than pulling the
+                // window out into floating.
+                if let Some((output, workspace_idx)) = tiling::locate(self, &window) {
+                    let grab = TiledTouchResizeGrab {
+                        start_data,
+                        window,
+                        edges: edges.into(),
+                        output,
+                        workspace_idx,
+                    };
+                    touch.set_grab(self, grab, serial);
+                    return;
+                }
 
                 let geometry = window.geometry();
                 let loc = self.space.element_location(&window).unwrap();
@@ -211,8 +223,20 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
             return;
         }
 
-        // Resizing a tiled window pulls it out into floating, like Hyprland.
-        tiling::untile_window(self, &window);
+        // A tiled window is resized in place - its dragged edge pushes the
+        // tiling tree's border rather than pulling the window out into
+        // floating.
+        if let Some((output, workspace_idx)) = tiling::locate(self, &window) {
+            let grab = TiledResizeGrab {
+                start_data,
+                window,
+                edges: edges.into(),
+                output,
+                workspace_idx,
+            };
+            pointer.set_grab(self, grab, serial, Focus::Clear);
+            return;
+        }
 
         let geometry = window.geometry();
         let loc = self.space.element_location(&window).unwrap();
