@@ -671,14 +671,24 @@ pub fn run_udev() {
         .unwrap();
 
     /*
-     * Start XWayland if supported
+     * Start XWayland if supported. Session announcement (which starts
+     * `graphical-session.target` and, through it, the shell) is deferred
+     * until XWayland has actually settled, rather than fired right away -
+     * otherwise the shell can be forked with `DISPLAY` still unset,
+     * permanently missing the later env update (see
+     * `crate::session::announce_xwayland_ready`'s doc) and failing to
+     * launch any XWayland-dependent app (e.g. Steam) for the rest of that
+     * session.
      */
     #[cfg(feature = "xwayland")]
-    state.start_xwayland();
+    let socket_name = state.socket_name.clone();
+    #[cfg(feature = "xwayland")]
+    state.start_xwayland(move |_| crate::session::announce_session_start(socket_name.as_deref()));
 
     #[cfg(feature = "libei")]
     crate::libei::listen_eis(&event_loop.handle());
 
+    #[cfg(not(feature = "xwayland"))]
     crate::session::announce_session_start(state.socket_name.as_deref());
 
     /*

@@ -233,7 +233,7 @@ pub fn run_winit() {
     crate::ext_workspace::ext_workspace_sync(&mut state);
 
     #[cfg(feature = "xwayland")]
-    state.start_xwayland();
+    state.start_xwayland(|_| {});
 
     info!("Initialization completed, starting the main loop.");
 

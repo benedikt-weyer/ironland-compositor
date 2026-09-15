@@ -1431,12 +1431,21 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         self.space.refresh();
     }
 
+    /// Spawns XWayland, wiring up the X11 window manager once it's ready.
+    /// `on_settled` runs exactly once after that - either once XWayland
+    /// actually came up, or once it's given up (crashed on startup) - so a
+    /// caller that needs XWayland's `DISPLAY` to already be in the
+    /// environment of anything it spawns next (see
+    /// `crate::session::announce_xwayland_ready`'s doc) can defer that
+    /// spawning until this fires, rather than racing XWayland's own
+    /// (asynchronous, variable-latency) startup.
     #[cfg(feature = "xwayland")]
-    pub fn start_xwayland(&mut self) {
+    pub fn start_xwayland(&mut self, on_settled: impl FnOnce(&mut Self) + 'static) {
         use std::process::Stdio;
 
         use smithay::wayland::compositor::CompositorHandler;
 
+        let mut on_settled = Some(on_settled);
         let (xwayland, client) = XWayland::spawn(
             &self.display_handle,
             None,
@@ -1482,9 +1491,15 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
                     data.xwm = Some(wm);
                     data.xdisplay = Some(display_number);
                     crate::session::announce_xwayland_ready(display_number);
+                    if let Some(on_settled) = on_settled.take() {
+                        on_settled(data);
+                    }
                 }
                 XWaylandEvent::Error => {
                     warn!("XWayland crashed on startup");
+                    if let Some(on_settled) = on_settled.take() {
+                        on_settled(data);
+                    }
                 }
             });
         if let Err(e) = ret {
