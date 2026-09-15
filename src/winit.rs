@@ -477,8 +477,7 @@ pub fn run_winit() {
                 // wrong grants or denies a real capability.
                 if let (Some(prompt_buffer), Some(location)) =
                     (&permission_prompt_buffer, permission_prompt_location)
-                {
-                    if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
+                    && let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
                         renderer,
                         location,
                         prompt_buffer,
@@ -489,13 +488,12 @@ pub fn run_winit() {
                     ) {
                         elements.push(CustomRenderElements::Overlay(element));
                     }
-                }
 
                 #[cfg(feature = "debug")]
                 elements.push(CustomRenderElements::Fps(fps_element.clone()));
 
-                if let Some((buffer, location)) = &perf_overlay_buffer_and_location {
-                    if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
+                if let Some((buffer, location)) = &perf_overlay_buffer_and_location
+                    && let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
                         renderer,
                         *location,
                         buffer,
@@ -506,7 +504,6 @@ pub fn run_winit() {
                     ) {
                         elements.push(CustomRenderElements::Overlay(element));
                     }
-                }
 
                 let background_element = MemoryRenderBufferRenderElement::from_buffer(
                     renderer,
@@ -522,8 +519,7 @@ pub fn run_winit() {
 
                 if let (Some(launcher_buffer), Some(location)) =
                     (&launcher_buffer, launcher_location)
-                {
-                    if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
+                    && let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
                         renderer,
                         location,
                         launcher_buffer,
@@ -534,10 +530,9 @@ pub fn run_winit() {
                     ) {
                         elements.push(CustomRenderElements::Overlay(element));
                     }
-                }
 
-                if let Some((buffer, location)) = &workspace_overlay_buffer_and_location {
-                    if let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
+                if let Some((buffer, location)) = &workspace_overlay_buffer_and_location
+                    && let Ok(element) = MemoryRenderBufferRenderElement::from_buffer(
                         renderer,
                         *location,
                         buffer,
@@ -548,7 +543,6 @@ pub fn run_winit() {
                     ) {
                         elements.push(CustomRenderElements::Overlay(element));
                     }
-                }
 
                 render_output(
                     &output,
@@ -568,7 +562,7 @@ pub fn run_winit() {
                     drop_indicator,
                     drop_indicator_cache,
                 )
-                .map(|result| {
+                .inspect(|_result| {
                     if let Some(size) = capture_size {
                         crate::screencopy::fulfill(
                             pending_captures,
@@ -584,7 +578,6 @@ pub fn run_winit() {
                             );
                         }
                     }
-                    result
                 })
                 .map_err(|err| match err {
                     OutputDamageTrackerError::Rendering(err) => err.into(),

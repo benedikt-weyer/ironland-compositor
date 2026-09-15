@@ -244,13 +244,11 @@ impl Backend for UdevData {
     }
 
     fn reset_buffers(&mut self, output: &Output) {
-        if let Some(id) = output.user_data().get::<UdevOutputId>() {
-            if let Some(gpu) = self.backends.get_mut(&id.device_id) {
-                if let Some(surface) = gpu.surfaces.get_mut(&id.crtc) {
+        if let Some(id) = output.user_data().get::<UdevOutputId>()
+            && let Some(gpu) = self.backends.get_mut(&id.device_id)
+                && let Some(surface) = gpu.surfaces.get_mut(&id.crtc) {
                     surface.drm_output.reset_buffers();
                 }
-            }
-        }
     }
 
     fn early_import(&mut self, surface: &wl_surface::WlSurface) {
@@ -451,11 +449,10 @@ pub fn run_udev() {
                     }
                     data.backend_data.keyboards.push(device.clone());
                 }
-            } else if let InputEvent::DeviceRemoved { ref device } = event {
-                if device.has_capability(DeviceCapability::Keyboard) {
+            } else if let InputEvent::DeviceRemoved { ref device } = event
+                && device.has_capability(DeviceCapability::Keyboard) {
                     data.backend_data.keyboards.retain(|item| item != device);
                 }
-            }
 
             data.process_input_event(&dh, event)
         })
@@ -635,8 +632,7 @@ pub fn run_udev() {
         .primary_gpu
         .node_with_type(NodeType::Primary)
         .and_then(|x| x.ok())
-    {
-        if let Some(backend) = state.backend_data.backends.get(&primary_node) {
+        && let Some(backend) = state.backend_data.backends.get(&primary_node) {
             let import_device = backend.drm_output_manager.device().device_fd().clone();
             if supports_syncobj_eventfd(&import_device) {
                 let syncobj_state =
@@ -644,7 +640,6 @@ pub fn run_udev() {
                 state.backend_data.syncobj_state = Some(syncobj_state);
             }
         }
-    }
 
     event_loop
         .handle()
@@ -1586,8 +1581,8 @@ impl AnvilState<UdevData> {
                 frame_duration.saturating_sub(Time::elapsed(&last_presentation_time, clock))
             });
 
-        if let Some(vblank_remaining_time) = vblank_remaining_time {
-            if vblank_remaining_time > frame_duration / 2 {
+        if let Some(vblank_remaining_time) = vblank_remaining_time
+            && vblank_remaining_time > frame_duration / 2 {
                 static WARN_ONCE: Once = Once::new();
                 WARN_ONCE.call_once(|| {
                     warn!("display running faster than expected, throttling vblanks and disabling HwClock")
@@ -1627,7 +1622,6 @@ impl AnvilState<UdevData> {
                 );
                 return;
             }
-        }
         surface.last_presentation_time = Some(clock);
 
         let submit_result = surface

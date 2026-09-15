@@ -143,8 +143,8 @@ impl<BackendData: Backend> CompositorHandler for AnvilState<BackendData> {
             });
             if let Some(dmabuf) = maybe_dmabuf {
                 #[cfg(feature = "udev")]
-                if let Some(acquire_point) = acquire_point {
-                    if let Ok((blocker, source)) = acquire_point.generate_blocker() {
+                if let Some(acquire_point) = acquire_point
+                    && let Ok((blocker, source)) = acquire_point.generate_blocker() {
                         let client = surface.client().unwrap();
                         let res = state.handle.insert_source(source, move |_, _, data| {
                             let dh = data.display_handle.clone();
@@ -156,9 +156,8 @@ impl<BackendData: Backend> CompositorHandler for AnvilState<BackendData> {
                             return;
                         }
                     }
-                }
-                if let Ok((blocker, source)) = dmabuf.generate_blocker(Interest::READ) {
-                    if let Some(client) = surface.client() {
+                if let Ok((blocker, source)) = dmabuf.generate_blocker(Interest::READ)
+                    && let Some(client) = surface.client() {
                         let res = state.handle.insert_source(source, move |_, _, data| {
                             let dh = data.display_handle.clone();
                             data.client_compositor_state(&client).blocker_cleared(data, &dh);
@@ -168,7 +167,6 @@ impl<BackendData: Backend> CompositorHandler for AnvilState<BackendData> {
                             add_blocker(surface, blocker);
                         }
                     }
-                }
             }
         });
     }
@@ -333,12 +331,11 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             previous == KeyboardInteractivity::None
         });
 
-        if was_none && interactivity != KeyboardInteractivity::None {
-            if let Some(keyboard) = self.seat.get_keyboard() {
+        if was_none && interactivity != KeyboardInteractivity::None
+            && let Some(keyboard) = self.seat.get_keyboard() {
                 let target: KeyboardFocusTarget = layer.into();
                 keyboard.set_focus(self, Some(target), SERIAL_COUNTER.next_serial());
             }
-        }
     }
 }
 

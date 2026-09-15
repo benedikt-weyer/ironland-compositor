@@ -307,11 +307,10 @@ impl Store {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if let Ok(json) = serde_json::to_string_pretty(self) {
-            if let Ok(mut file) = std::fs::File::create(&path) {
+        if let Ok(json) = serde_json::to_string_pretty(self)
+            && let Ok(mut file) = std::fs::File::create(&path) {
                 let _ = file.write_all(json.as_bytes());
             }
-        }
     }
 }
 
@@ -475,8 +474,8 @@ impl GlobalShortcutsIface {
                     .map(str::to_string)
             });
 
-            if let Some(spec) = &trigger {
-                if let Some((mods, keysym)) = parse_binding(spec) {
+            if let Some(spec) = &trigger
+                && let Some((mods, keysym)) = parse_binding(spec) {
                     let _ = shared.cmd_tx.send(WaylandCmd::Bind {
                         session_handle: session_handle.clone(),
                         shortcut_id: id.clone(),
@@ -484,7 +483,6 @@ impl GlobalShortcutsIface {
                         keysym: keysym.raw(),
                     });
                 }
-            }
 
             shared.store.apps.entry(app_id.clone()).or_default().insert(
                 id.clone(),

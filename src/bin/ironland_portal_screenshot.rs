@@ -6,10 +6,10 @@
 //! (`$IRONLAND_CAPTURE_SOCKET`, set by the compositor and exported to
 //! systemd/D-Bus activation environment the same way `$WAYLAND_DISPLAY` is
 //! - see `crate::session`). That socket isn't itself what gates capture
-//! (see `crate::screencopy`'s module doc - the compositor gates every
-//! capturer, this binary included, by its own executable identity); this
-//! binary just also needs `ironland-permission-prompt-v1`, which *is*
-//! restricted to it.
+//!   (see `crate::screencopy`'s module doc - the compositor gates every
+//!   capturer, this binary included, by its own executable identity); this
+//!   binary just also needs `ironland-permission-prompt-v1`, which *is*
+//!   restricted to it.
 //!
 //! Like `ironland-portal-global-shortcuts`, this is a small standalone
 //! Wayland client - not part of the compositor binary - meant to be D-Bus
@@ -238,10 +238,10 @@ impl Dispatch<ExtImageCopyCaptureSessionV1, ()> for App {
             ext_image_copy_capture_session_v1::Event::BufferSize { width, height } => {
                 state.session.buffer_size = Some((width, height));
             }
-            ext_image_copy_capture_session_v1::Event::ShmFormat { format } => {
-                if let wayland_client::WEnum::Value(format) = format {
-                    state.session.shm_formats.push(format);
-                }
+            ext_image_copy_capture_session_v1::Event::ShmFormat {
+                format: wayland_client::WEnum::Value(format),
+            } => {
+                state.session.shm_formats.push(format);
             }
             ext_image_copy_capture_session_v1::Event::Done => state.session.done = true,
             ext_image_copy_capture_session_v1::Event::Stopped => state.session.stopped = true,

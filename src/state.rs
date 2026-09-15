@@ -463,20 +463,18 @@ impl<BackendData: Backend> SelectionHandler for AnvilState<BackendData> {
 
     fn new_selection(&mut self, ty: SelectionTarget, source: Option<SelectionSource>, seat: Seat<Self>) {
         #[cfg(feature = "xwayland")]
-        if let Some(xwm) = self.xwm.as_mut() {
-            if let Err(err) = xwm.new_selection(ty, source.as_ref().map(|source| source.mime_types())) {
+        if let Some(xwm) = self.xwm.as_mut()
+            && let Err(err) = xwm.new_selection(ty, source.as_ref().map(|source| source.mime_types())) {
                 warn!(?err, ?ty, "Failed to set Xwayland selection");
             }
-        }
 
         // Clipboard-history capture (see `crate::clipboard`'s module doc)
         // cares only about the clipboard, not the primary selection, and
         // only about an actual client source, not it being cleared.
-        if ty == SelectionTarget::Clipboard {
-            if let Some(source) = &source {
+        if ty == SelectionTarget::Clipboard
+            && let Some(source) = &source {
                 crate::clipboard::capture(&self.handle.clone(), &seat, source);
             }
-        }
     }
 
     #[cfg(feature = "xwayland")]
@@ -488,11 +486,10 @@ impl<BackendData: Backend> SelectionHandler for AnvilState<BackendData> {
         _seat: Seat<Self>,
         _user_data: &(),
     ) {
-        if let Some(xwm) = self.xwm.as_mut() {
-            if let Err(err) = xwm.send_selection(ty, mime_type, fd) {
+        if let Some(xwm) = self.xwm.as_mut()
+            && let Err(err) = xwm.send_selection(ty, mime_type, fd) {
                 warn!(?err, "Failed to send primary (X11 -> Wayland)");
             }
-        }
     }
 }
 
@@ -614,7 +611,7 @@ impl<BackendData: Backend> PointerConstraintsHandler for AnvilState<BackendData>
 
         match constraint_remove {
             ConstraintRemove::Destroyed(pointer_constraint) => match pointer_constraint {
-                PointerConstraint::Confined(_confined_pointer) => return,
+                PointerConstraint::Confined(_confined_pointer) => (),
                 PointerConstraint::Locked(locked_pointer) => {
                     let origin = self
                         .space
@@ -637,7 +634,7 @@ impl<BackendData: Backend> PointerConstraintsHandler for AnvilState<BackendData>
                     }
                 }
             },
-            ConstraintRemove::PointerLeave(_region) => return,
+            ConstraintRemove::PointerLeave(_region) => (),
         }
     }
 
@@ -1369,7 +1366,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
                     settings
                         .mirror_of
                         .as_ref()
-                        .or_else(|| match settings.position.as_ref() {
+                        .or(match settings.position.as_ref() {
                             Some(crate::config::OutputPosition::RightOf { right_of }) => {
                                 Some(right_of)
                             }

@@ -205,8 +205,8 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             }
 
             KeyAction::ToggleFloating => {
-                if let Some(keyboard) = self.seat.get_keyboard() {
-                    if let Some(crate::focus::KeyboardFocusTarget::Window(w)) =
+                if let Some(keyboard) = self.seat.get_keyboard()
+                    && let Some(crate::focus::KeyboardFocusTarget::Window(w)) =
                         keyboard.current_focus()
                     {
                         crate::shell::tiling::toggle_floating(
@@ -214,12 +214,11 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                             &crate::shell::WindowElement(w),
                         );
                     }
-                }
             }
 
             KeyAction::KillWindow => {
-                if let Some(keyboard) = self.seat.get_keyboard() {
-                    if let Some(crate::focus::KeyboardFocusTarget::Window(w)) =
+                if let Some(keyboard) = self.seat.get_keyboard()
+                    && let Some(crate::focus::KeyboardFocusTarget::Window(w)) =
                         keyboard.current_focus()
                     {
                         match w.underlying_surface() {
@@ -232,7 +231,6 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                             }
                         }
                     }
-                }
             }
 
             KeyAction::FocusDirection(dir) => {
@@ -567,8 +565,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     .user_data()
                     .get::<FullscreenSurface>()
                     .and_then(|f| f.get())
-                {
-                    if let Some((_, _)) = window
+                    && let Some((_, _)) = window
                         .surface_under(location - output_geo.loc.to_f64(), WindowSurfaceType::ALL)
                     {
                         #[cfg(feature = "xwayland")]
@@ -578,7 +575,6 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                         keyboard.set_focus(self, Some(window.into()), serial);
                         return;
                     }
-                }
 
                 let layers = layer_map_for_output(output);
                 if let Some(layer) = layers
@@ -586,9 +582,8 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     .or_else(|| {
                         layers.layer_under(WlrLayer::Top, location - output_geo.loc.to_f64())
                     })
-                {
-                    if layer.can_receive_keyboard_focus() {
-                        if let Some((_, _)) = layer.surface_under(
+                    && layer.can_receive_keyboard_focus()
+                        && let Some((_, _)) = layer.surface_under(
                             location
                                 - output_geo.loc.to_f64()
                                 - layers.layer_geometry(layer).unwrap().loc.to_f64(),
@@ -597,8 +592,6 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                             keyboard.set_focus(self, Some(layer.clone().into()), serial);
                             return;
                         }
-                    }
-                }
             }
 
             if let Some((window, _)) = self
@@ -623,9 +616,8 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     .or_else(|| {
                         layers.layer_under(WlrLayer::Background, location - output_geo.loc.to_f64())
                     })
-                {
-                    if layer.can_receive_keyboard_focus() {
-                        if let Some((_, _)) = layer.surface_under(
+                    && layer.can_receive_keyboard_focus()
+                        && let Some((_, _)) = layer.surface_under(
                             location
                                 - output_geo.loc.to_f64()
                                 - layers.layer_geometry(layer).unwrap().loc.to_f64(),
@@ -633,8 +625,6 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                         ) {
                             keyboard.set_focus(self, Some(layer.clone().into()), serial);
                         }
-                    }
-                }
             };
         }
     }
@@ -720,8 +710,8 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         // under the pointer, mirroring the `workspace_left`/`workspace_right`
         // keybindings. Only fires on a discrete wheel step (not touchpad
         // scroll), so it can't be triggered by continuous finger scrolling.
-        if let Some(discrete) = vertical_amount_discrete {
-            if discrete != 0.0 {
+        if let Some(discrete) = vertical_amount_discrete
+            && discrete != 0.0 {
                 let logo_held = self
                     .seat
                     .get_keyboard()
@@ -736,7 +726,6 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     return;
                 }
             }
-        }
 
         {
             let mut frame = AxisFrame::new(evt.time()).source(evt.source());
@@ -1357,9 +1346,9 @@ impl AnvilState<UdevData> {
         let mut delta = self.clamp_coords(pointer_location + evt.delta()) - pointer_location;
 
         // Clamp the individual x and y components of delta to respect confinement regions
-        if pointer_confined {
-            if let Some((_, surface_loc)) = &under {
-                if let Some(region) = &confine_region {
+        if pointer_confined
+            && let Some((_, surface_loc)) = &under
+                && let Some(region) = &confine_region {
                     // Clamp delta.x
                     if !region.contains(
                         (pointer_location + Point::new(delta.x, 0f64) - *surface_loc)
@@ -1376,8 +1365,6 @@ impl AnvilState<UdevData> {
                         delta.y = 0f64;
                     }
                 }
-            }
-        }
 
         pointer_location += delta;
 
@@ -1388,16 +1375,14 @@ impl AnvilState<UdevData> {
         let new_under = self.surface_under(pointer_location);
 
         // If confined, don't move pointer if it would go outside surface
-        if pointer_confined {
-            if let Some((surface, _)) = &under {
-                if new_under.as_ref().and_then(|(under, _)| under.wl_surface())
+        if pointer_confined
+            && let Some((surface, _)) = &under
+                && new_under.as_ref().and_then(|(under, _)| under.wl_surface())
                     != surface.wl_surface()
                 {
                     pointer.frame(self);
                     return;
                 }
-            }
-        }
 
         pointer.motion(
             self,
@@ -1875,14 +1860,13 @@ fn launcher_key_action(keysym: Keysym) -> KeyAction {
 fn current_output_for_workspace_nav<BackendData: Backend>(
     state: &AnvilState<BackendData>,
 ) -> Option<smithay::output::Output> {
-    if let Some(keyboard) = state.seat.get_keyboard() {
-        if let Some(crate::focus::KeyboardFocusTarget::Window(w)) = keyboard.current_focus() {
+    if let Some(keyboard) = state.seat.get_keyboard()
+        && let Some(crate::focus::KeyboardFocusTarget::Window(w)) = keyboard.current_focus() {
             let window = crate::shell::WindowElement(w);
             if let Some(output) = state.space.outputs_for_element(&window).first().cloned() {
                 return Some(output);
             }
         }
-    }
     state
         .space
         .output_under(state.pointer.current_location())
@@ -1934,12 +1918,9 @@ fn action_for_name(
         "rotate_output" => KeyAction::RotateOutput,
         "toggle_tint" => KeyAction::ToggleTint,
         "toggle_decorations" => KeyAction::ToggleDecorations,
-        _ => match name.strip_prefix("shortcut:") {
-            // See `config::is_shortcut_action` - a `"shortcut:<name>"`
-            // action fires `ironland_shortcut_v1` events for `<name>`
-            // rather than an internal compositor action.
-            Some(shortcut_name) => KeyAction::Shortcut(shortcut_name.to_string()),
-            None => return None,
+        _ => {
+            let shortcut_name = name.strip_prefix("shortcut:")?;
+            KeyAction::Shortcut(shortcut_name.to_string())
         },
     })
 }
