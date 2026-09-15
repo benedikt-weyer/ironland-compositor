@@ -748,8 +748,11 @@ pub fn switch_workspace<B: Backend>(state: &mut AnvilState<B>, output: &Output, 
 
 /// Moves the currently focused window `delta` workspaces over on its own
 /// output (-1 = previous, +1 = next). No-op if nothing is focused or that
-/// would go out of bounds.
-pub fn move_focused_window<B: Backend>(state: &mut AnvilState<B>, delta: i32) {
+/// would go out of bounds. If `follow` is true, the output's active
+/// workspace switches to the window's new one (see [`set_active`]);
+/// otherwise the active workspace stays put and focus returns to whatever
+/// else is left there.
+pub fn move_focused_window<B: Backend>(state: &mut AnvilState<B>, delta: i32, follow: bool) {
     let Some(window) = tiling::current_focused_window(state) else {
         return;
     };
@@ -806,10 +809,13 @@ pub fn move_focused_window<B: Backend>(state: &mut AnvilState<B>, delta: i32) {
         state.space.unmap_elem(&window);
     }
 
-    focus_first_in_workspace(state, &output, active);
-
-    if state.config.workspaces.dynamic {
-        prune_trailing_empty(&output);
+    if follow {
+        set_active(state, &output, target_idx);
+    } else {
+        focus_first_in_workspace(state, &output, active);
+        if state.config.workspaces.dynamic {
+            prune_trailing_empty(&output);
+        }
     }
 
     show_overlay(state);

@@ -44,9 +44,11 @@ in
       demand and prunes empty trailing workspaces automatically instead of
       keeping it fixed at `count`; `overlay` (default true) shows a row of
       dots on screen briefly whenever the active workspace changes. Switch
-      workspaces with Super+Left/Right and move the focused window to an
-      adjacent one with Super+Alt+Left/Right (both rebindable in
-      `shortcuts` as `workspace_left`/`workspace_right` and
+      workspaces with Super+Left/Right; move the focused window to an
+      adjacent one and follow it there with Super+Alt+Left/Right, or move it
+      without following with Super+Ctrl+Alt+Left/Right (all rebindable in
+      `shortcuts` as `workspace_left`/`workspace_right`,
+      `move_workspace_left_follow`/`move_workspace_right_follow`, and
       `move_workspace_left`/`move_workspace_right`). Pointer/keyboard-focus
       interaction is under `focus`, both off by default (click-to-focus,
       unchanged from before either existed): `follows_mouse`, if true,

@@ -254,8 +254,8 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 }
             }
 
-            KeyAction::MoveWindowWorkspace(delta) => {
-                crate::shell::workspace::move_focused_window(self, delta);
+            KeyAction::MoveWindowWorkspace(delta, follow) => {
+                crate::shell::workspace::move_focused_window(self, delta, follow);
                 crate::ext_workspace::ext_workspace_sync(self);
             }
 
@@ -963,7 +963,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     | KeyAction::SwapDirection(_)
                     | KeyAction::ResizeTiled(_)
                     | KeyAction::SwitchWorkspace(_)
-                    | KeyAction::MoveWindowWorkspace(_)
+                    | KeyAction::MoveWindowWorkspace(_, _)
                     | KeyAction::Shortcut(_)
                     | KeyAction::ShortcutReleased(_)
                     | KeyAction::ShortcutTap(_) => self.process_common_key_action(action),
@@ -1224,7 +1224,7 @@ impl AnvilState<UdevData> {
                     | KeyAction::SwapDirection(_)
                     | KeyAction::ResizeTiled(_)
                     | KeyAction::SwitchWorkspace(_)
-                    | KeyAction::MoveWindowWorkspace(_)
+                    | KeyAction::MoveWindowWorkspace(_, _)
                     | KeyAction::Shortcut(_)
                     | KeyAction::ShortcutReleased(_)
                     | KeyAction::ShortcutTap(_) => self.process_common_key_action(action),
@@ -1789,8 +1789,10 @@ pub(crate) enum KeyAction {
     ResizeTiled(crate::shell::tiling::Direction),
     /// Switch the active workspace by a relative step (-1 = previous, +1 = next)
     SwitchWorkspace(i32),
-    /// Move the focused window to an adjacent workspace by a relative step
-    MoveWindowWorkspace(i32),
+    /// Move the focused window to an adjacent workspace by a relative step;
+    /// the `bool` selects whether the active workspace follows the window
+    /// there (true) or stays put (false).
+    MoveWindowWorkspace(i32, bool),
     /// Open or close the application launcher
     ToggleLauncher,
     /// Append a character to the launcher's search query
@@ -1896,8 +1898,10 @@ fn action_for_name(
         "resize_down" => KeyAction::ResizeTiled(Direction::Down),
         "workspace_left" => KeyAction::SwitchWorkspace(-1),
         "workspace_right" => KeyAction::SwitchWorkspace(1),
-        "move_workspace_left" => KeyAction::MoveWindowWorkspace(-1),
-        "move_workspace_right" => KeyAction::MoveWindowWorkspace(1),
+        "move_workspace_left" => KeyAction::MoveWindowWorkspace(-1, false),
+        "move_workspace_right" => KeyAction::MoveWindowWorkspace(1, false),
+        "move_workspace_left_follow" => KeyAction::MoveWindowWorkspace(-1, true),
+        "move_workspace_right_follow" => KeyAction::MoveWindowWorkspace(1, true),
         "scale_up" => KeyAction::ScaleUp,
         "scale_down" => KeyAction::ScaleDown,
         "toggle_preview" => KeyAction::TogglePreview,

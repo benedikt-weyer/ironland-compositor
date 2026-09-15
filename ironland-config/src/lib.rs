@@ -461,15 +461,20 @@ pub fn default_shortcuts() -> HashMap<String, Vec<String>> {
         ("swap_down", vec!["super+shift+down"]),
         // Likewise, `resize_left`/`resize_right` moved off `super+alt+left/
         // right`, which now moves the focused window to an adjacent
-        // workspace (see `move_workspace_left`/`move_workspace_right`).
+        // workspace and follows it there (see `move_workspace_left_follow`/
+        // `move_workspace_right_follow`).
         ("resize_left", vec!["super+ctrl+shift+left"]),
         ("resize_right", vec!["super+ctrl+shift+right"]),
         ("resize_up", vec!["super+alt+up"]),
         ("resize_down", vec!["super+alt+down"]),
         ("workspace_left", vec!["super+left"]),
         ("workspace_right", vec!["super+right"]),
-        ("move_workspace_left", vec!["super+alt+left"]),
-        ("move_workspace_right", vec!["super+alt+right"]),
+        // Moves the focused window to an adjacent workspace without
+        // switching to it, unlike the `_follow` pair below.
+        ("move_workspace_left", vec!["super+ctrl+alt+left"]),
+        ("move_workspace_right", vec!["super+ctrl+alt+right"]),
+        ("move_workspace_left_follow", vec!["super+alt+left"]),
+        ("move_workspace_right_follow", vec!["super+alt+right"]),
         ("scale_up", vec!["super+shift+p"]),
         ("scale_down", vec!["super+shift+m"]),
         ("toggle_preview", vec!["super+shift+w"]),
@@ -515,6 +520,8 @@ pub fn known_actions() -> Vec<&'static str> {
         "workspace_right",
         "move_workspace_left",
         "move_workspace_right",
+        "move_workspace_left_follow",
+        "move_workspace_right_follow",
         "scale_up",
         "scale_down",
         "toggle_preview",
