@@ -377,7 +377,20 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                             }
                         };
                     } else if let KeyState::Pressed = state {
-                        data.super_tap_pending = Some(false);
+                        // Only actually breaks a tap in progress (Super
+                        // currently held down). Otherwise-unconditional
+                        // `Some(false)` here would flip `None` to
+                        // `Some(false)` on every ordinary keypress (typing
+                        // into a text field, say) while Super isn't even
+                        // held - stale state that then silently no-ops the
+                        // *next* bare Super tap (its release finds
+                        // `Some(false)` instead of `None`, so the `is_none()`
+                        // check above never runs and `was_tap` reads false),
+                        // requiring a second press to actually open the
+                        // launcher.
+                        if data.super_tap_pending == Some(true) {
+                            data.super_tap_pending = Some(false);
+                        }
                     }
 
                     // While a screen-capture permission prompt (see
