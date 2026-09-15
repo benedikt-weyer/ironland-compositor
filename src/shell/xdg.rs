@@ -6,7 +6,10 @@ use smithay::{
         WindowSurfaceType, find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output,
         space::SpaceElement,
     },
-    input::{Seat, pointer::Focus},
+    input::{
+        Seat,
+        pointer::{Focus, GrabStartData as PointerGrabStartData},
+    },
     output::Output,
     reexports::{
         wayland_protocols::xdg::{decoration as xdg_decoration, shell::server::xdg_toplevel},
@@ -628,6 +631,71 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         };
 
         pointer.set_grab(self, grab, serial, Focus::Clear);
+    }
+
+    /// Starts a move grab directly from a Super+left-drag, i.e. without a
+    /// client having requested it via `xdg_toplevel::move` (or the X11
+    /// equivalent). Mirrors [`Self::move_request_xdg`] but the window comes
+    /// from hit-testing the pointer location rather than a serial-matched
+    /// client request, since the compositor itself is initiating the drag.
+    /// Returns `false` (leaving the button press to be handled normally) if
+    /// there's no window under the pointer to drag.
+    pub fn start_super_move_grab(&mut self, serial: Serial, button: u32) -> bool {
+        let pointer = self.seat.get_pointer().unwrap();
+        let location = pointer.current_location();
+
+        let Some(window) = self.space.element_under(location).map(|(w, _)| w.clone()) else {
+            return false;
+        };
+
+        let focus = self.surface_under(location);
+
+        let was_tiled = tiling::untile_window(self, &window);
+        let mut initial_window_location = self.space.element_location(&window).unwrap();
+
+        // If surface is maximized then unmaximize it, same as
+        // `move_request_xdg` - dragging it should un-maximize like any other
+        // move.
+        if let Some(toplevel) = window.0.toplevel() {
+            let changed = toplevel.with_pending_state(|state| {
+                if state.states.unset(xdg_toplevel::State::Maximized) {
+                    state.size = None;
+                    true
+                } else {
+                    false
+                }
+            });
+            if changed {
+                toplevel.send_configure();
+                initial_window_location = (location.x as i32, location.y as i32).into();
+            }
+        }
+
+        self.space.raise_element(&window, true);
+        #[cfg(feature = "xwayland")]
+        if let Some(surface) = window.0.x11_surface() {
+            self.xwm.as_mut().unwrap().raise_window(surface).unwrap();
+        }
+        if let Some(keyboard) = self.seat.get_keyboard() {
+            keyboard.set_focus(self, Some(window.clone().into()), serial);
+        }
+
+        let start_data = PointerGrabStartData {
+            focus,
+            button,
+            location,
+        };
+
+        let grab = PointerMoveSurfaceGrab {
+            last_location: location,
+            start_data,
+            window,
+            initial_window_location,
+            was_tiled,
+        };
+
+        pointer.set_grab(self, grab, serial, Focus::Clear);
+        true
     }
 
     fn unconstrain_popup(&self, popup: &PopupSurface) {

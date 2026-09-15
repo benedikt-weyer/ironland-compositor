@@ -496,6 +496,19 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         }
 
         if wl_pointer::ButtonState::Pressed == state {
+            let super_held = self
+                .seat
+                .get_keyboard()
+                .map(|keyboard| keyboard.modifier_state().logo)
+                .unwrap_or(false);
+            if super_held
+                && evt.button() == Some(MouseButton::Left)
+                && !self.pointer.is_grabbed()
+                && self.start_super_move_grab(serial, button)
+            {
+                return;
+            }
+
             self.update_keyboard_focus(self.pointer.current_location(), serial);
 
             let focused = self
