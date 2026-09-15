@@ -24,7 +24,12 @@
 //!
 //! ```json
 //! {"activate":{"output":"eDP-1","index":1}}
+//! {"setFloating":{"output":"eDP-1","index":1,"title":"~","appId":"foot","floating":true}}
 //! ```
+//!
+//! `setFloating` is a no-op on a compositor that doesn't support
+//! `ironland-workspace-windows-v1` (see the `windows` field above), and
+//! matches the target window the same best-effort way that field does.
 //!
 //! Unknown/malformed lines and commands naming an output or index that
 //! doesn't currently exist are silently ignored.
@@ -84,16 +89,29 @@ struct ActivateCommand {
 }
 
 #[derive(Deserialize)]
+struct SetFloatingCommand {
+    output: String,
+    index: usize,
+    title: String,
+    #[serde(rename = "appId")]
+    app_id: String,
+    floating: bool,
+}
+
+#[derive(Deserialize)]
 enum Command {
     #[serde(rename = "activate")]
     Activate(ActivateCommand),
+    #[serde(rename = "setFloating")]
+    SetFloating(SetFloatingCommand),
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct WindowJson {
     title: String,
     #[serde(rename = "appId")]
     app_id: String,
+    floating: bool,
 }
 
 #[derive(Serialize)]
@@ -134,6 +152,10 @@ struct GroupEntry {
 
 struct App {
     manager: Option<ExtWorkspaceManagerV1>,
+    /// Kept alive (rather than just bound and dropped) so [`App::handle_command`]
+    /// can send `set_floating` requests through it later. `None` on a
+    /// compositor that doesn't support the protocol at all.
+    workspace_windows: Option<IronlandWorkspaceWindowsV1>,
     output_names: HashMap<ObjectId, String>,
     groups: Vec<GroupEntry>,
     /// Settled snapshot from the last `ironland-workspace-windows-v1` done,
@@ -163,15 +185,7 @@ impl App {
                             windows: self
                                 .windows_by_workspace
                                 .get(&(name.clone(), w.index as u32))
-                                .map(|windows| {
-                                    windows
-                                        .iter()
-                                        .map(|win| WindowJson {
-                                            title: win.title.clone(),
-                                            app_id: win.app_id.clone(),
-                                        })
-                                        .collect()
-                                })
+                                .cloned()
                                 .unwrap_or_default(),
                         })
                         .collect(),
@@ -203,6 +217,17 @@ impl App {
                 workspace.handle.activate();
                 if let Some(manager) = &self.manager {
                     manager.commit();
+                }
+            }
+            Command::SetFloating(SetFloatingCommand {
+                output,
+                index,
+                title,
+                app_id,
+                floating,
+            }) => {
+                if let Some(manager) = &self.workspace_windows {
+                    manager.set_floating(output, index as u32, title, app_id, floating as u32);
                 }
             }
         }
@@ -387,12 +412,13 @@ impl Dispatch<IronlandWorkspaceWindowsV1, ()> for App {
                 workspace,
                 title,
                 app_id,
+                floating,
             } => {
-                state
-                    .pending_windows
-                    .entry((output, workspace))
-                    .or_default()
-                    .push(WindowJson { title, app_id });
+                state.pending_windows.entry((output, workspace)).or_default().push(WindowJson {
+                    title,
+                    app_id,
+                    floating: floating != 0,
+                });
             }
             ironland_workspace_windows_v1::Event::Done => {
                 state.windows_by_workspace = std::mem::take(&mut state.pending_windows);
@@ -416,6 +442,7 @@ fn main() {
 
     let mut app = App {
         manager: None,
+        workspace_windows: None,
         output_names: HashMap::new(),
         groups: Vec::new(),
         windows_by_workspace: HashMap::new(),
@@ -442,13 +469,14 @@ fn main() {
     };
 
     // Best-effort: a compositor without this protocol just never gets
-    // per-workspace window data (every workspace's `windows` stays empty),
-    // rather than failing to start.
-    if let Err(err) = globals.bind::<IronlandWorkspaceWindowsV1, _, _>(&qh, 1..=1, ()) {
-        eprintln!(
+    // per-workspace window data (every workspace's `windows` stays empty)
+    // and `setFloating` becomes a no-op, rather than failing to start.
+    match globals.bind::<IronlandWorkspaceWindowsV1, _, _>(&qh, 1..=2, ()) {
+        Ok(proxy) => app.workspace_windows = Some(proxy),
+        Err(err) => eprintln!(
             "ironland-workspaces: compositor doesn't support ironland-workspace-windows-v1, \
-             per-workspace window lists will be empty: {err}"
-        );
+             per-workspace window lists will be empty and setFloating will be a no-op: {err}"
+        ),
     }
 
     let mut event_loop: EventLoop<App> = EventLoop::try_new().expect("failed to create event loop");

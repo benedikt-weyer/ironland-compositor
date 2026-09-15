@@ -24,9 +24,15 @@ use crate::ironland_protocols::workspace_windows::ironland_workspace_windows_v1:
 /// type parameter) directly.
 pub trait WorkspaceWindowsHandler: 'static {
     fn workspace_windows_state(&mut self) -> &mut WorkspaceWindowsState;
-    /// Every window's current (output name, workspace index, title, app id),
-    /// if it's been assigned a home yet (see `shell::workspace::window_home`).
-    fn windows_by_workspace(&self) -> Vec<(String, usize, String, String)>;
+    /// Every window's current (output name, workspace index, title, app id,
+    /// floating), if it's been assigned a home yet (see
+    /// `shell::workspace::window_home`).
+    fn windows_by_workspace(&self) -> Vec<(String, usize, String, String, bool)>;
+    /// Handle a client's `set_floating` request: tile or float whichever
+    /// window best-effort matches `(output, workspace, title, app_id)` (see
+    /// the protocol doc for why matching is best-effort), a no-op if none
+    /// does.
+    fn set_window_floating(&mut self, output: &str, workspace: usize, title: &str, app_id: &str, floating: bool);
 }
 
 #[derive(Debug)]
@@ -40,7 +46,7 @@ impl WorkspaceWindowsState {
     where
         D: GlobalDispatch<IronlandWorkspaceWindowsV1, GlobalData> + 'static,
     {
-        let global = dh.create_global::<D, IronlandWorkspaceWindowsV1, _>(1, GlobalData);
+        let global = dh.create_global::<D, IronlandWorkspaceWindowsV1, _>(2, GlobalData);
         WorkspaceWindowsState {
             global,
             instances: Vec::new(),
@@ -65,8 +71,8 @@ pub struct GlobalData;
 pub fn sync<D: WorkspaceWindowsHandler>(state: &mut D) {
     let windows = state.windows_by_workspace();
     for instance in &state.workspace_windows_state().instances {
-        for (output, workspace, title, app_id) in &windows {
-            instance.window(output.clone(), *workspace as u32, title.clone(), app_id.clone());
+        for (output, workspace, title, app_id, floating) in &windows {
+            instance.window(output.clone(), *workspace as u32, title.clone(), app_id.clone(), *floating as u32);
         }
         instance.done();
     }
@@ -86,8 +92,8 @@ where
     ) {
         let instance = data_init.init(resource, GlobalData);
         let windows = state.windows_by_workspace();
-        for (output, workspace, title, app_id) in &windows {
-            instance.window(output.clone(), *workspace as u32, title.clone(), app_id.clone());
+        for (output, workspace, title, app_id, floating) in &windows {
+            instance.window(output.clone(), *workspace as u32, title.clone(), app_id.clone(), *floating as u32);
         }
         instance.done();
         state.workspace_windows_state().instances.push(instance);
@@ -97,14 +103,25 @@ where
 impl<D: WorkspaceWindowsHandler> Dispatch2<IronlandWorkspaceWindowsV1, D> for GlobalData {
     fn request(
         &self,
-        _state: &mut D,
+        state: &mut D,
         _client: &Client,
         _resource: &IronlandWorkspaceWindowsV1,
         request: ironland_workspace_windows_v1::Request,
         _dh: &DisplayHandle,
         _data_init: &mut DataInit<'_, D>,
     ) {
-        let ironland_workspace_windows_v1::Request::Destroy = request;
+        match request {
+            ironland_workspace_windows_v1::Request::Destroy => {}
+            ironland_workspace_windows_v1::Request::SetFloating {
+                output,
+                workspace,
+                title,
+                app_id,
+                floating,
+            } => {
+                state.set_window_floating(&output, workspace as usize, &title, &app_id, floating != 0);
+            }
+        }
     }
 
     fn destroyed(&self, state: &mut D, _client: ClientId, resource: &IronlandWorkspaceWindowsV1) {

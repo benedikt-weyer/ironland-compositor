@@ -885,6 +885,15 @@ pub(crate) fn window_home(window: &WindowElement) -> Option<(Output, usize)> {
     Some((output, *home.index.borrow()))
 }
 
+/// Whether `window` is currently floating rather than tiled. `false` for a
+/// window with no home yet.
+pub(crate) fn is_floating(window: &WindowElement) -> bool {
+    let Some((output, idx)) = window_home(window) else {
+        return false;
+    };
+    WorkspaceState::get(&output).floating_at(idx).contains(window)
+}
+
 /// Switches to whichever workspace `window` is homed to (if it isn't
 /// already the active one on its output) and focuses it. Backs the
 /// `zwlr_foreign_toplevel_handle_v1.activate` request - see

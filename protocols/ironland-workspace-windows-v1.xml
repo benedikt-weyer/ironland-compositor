@@ -39,9 +39,27 @@
     snapshot-per-`done` pattern `ext-workspace-v1` itself uses.
   </description>
 
-  <interface name="ironland_workspace_windows_v1" version="1">
+  <interface name="ironland_workspace_windows_v1" version="2">
     <request name="destroy" type="destructor">
       <description summary="stop listening"/>
+    </request>
+
+    <request name="set_floating" since="2">
+      <description summary="tile or float a window">
+        Requests that the window matching `output`/`workspace`/`title`/
+        `app_id` (the same tuple most recently reported for it in a
+        `window` event - matching is best-effort for the same reason
+        identification is, see above) be tiled or floated. A request that
+        matches no known window is silently ignored.
+
+        Takes effect asynchronously: watch for the corresponding `window`
+        event's `floating` field to change rather than assuming it applied.
+      </description>
+      <arg name="output" type="string"/>
+      <arg name="workspace" type="uint"/>
+      <arg name="title" type="string"/>
+      <arg name="app_id" type="string"/>
+      <arg name="floating" type="uint" summary="0 = tile, 1 = float"/>
     </request>
 
     <event name="window">
@@ -50,6 +68,7 @@
       <arg name="workspace" type="uint" summary="workspace index on that output, matching ext-workspace-v1"/>
       <arg name="title" type="string"/>
       <arg name="app_id" type="string"/>
+      <arg name="floating" type="uint" since="2" summary="0 = tiled, 1 = floating"/>
     </event>
 
     <event name="done">

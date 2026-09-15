@@ -423,15 +423,36 @@ impl<BackendData: Backend> crate::workspace_windows::WorkspaceWindowsHandler for
         &mut self.workspace_windows_state
     }
 
-    fn windows_by_workspace(&self) -> Vec<(String, usize, String, String)> {
+    fn windows_by_workspace(&self) -> Vec<(String, usize, String, String, bool)> {
         crate::shell::workspace::all_windows(self)
             .into_iter()
             .filter_map(|window| {
                 let (output, idx) = crate::shell::workspace::window_home(&window)?;
                 let (title, app_id) = crate::foreign_toplevel::title_and_app_id(&window.0);
-                Some((output.name(), idx, title, app_id))
+                let floating = crate::shell::workspace::is_floating(&window);
+                Some((output.name(), idx, title, app_id, floating))
             })
             .collect()
+    }
+
+    fn set_window_floating(&mut self, output: &str, workspace: usize, title: &str, app_id: &str, floating: bool) {
+        let window = crate::shell::workspace::all_windows(self).into_iter().find(|window| {
+            let Some((home_output, home_idx)) = crate::shell::workspace::window_home(window) else {
+                return false;
+            };
+            if home_output.name() != output || home_idx != workspace {
+                return false;
+            }
+            let (t, a) = crate::foreign_toplevel::title_and_app_id(&window.0);
+            t == title && a == app_id
+        });
+        let Some(window) = window else {
+            return;
+        };
+        crate::shell::tiling::set_floating(self, &window, floating);
+        crate::ext_workspace::ext_workspace_sync(self);
+        crate::foreign_toplevel::sync(self);
+        crate::workspace_windows::sync(self);
     }
 }
 

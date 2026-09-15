@@ -802,15 +802,40 @@ pub fn tile_new_window<BackendData: Backend>(
     };
 
     let idx = WorkspaceState::get(&output).active();
-    let target = current_focused_window(state).filter(|w| TilingState::tree(&output, idx).contains(w));
+    insert_into_tree(state, window, &output, idx);
+}
 
-    crate::shell::workspace::assign_new_window(window, &output, false);
+/// Shared tail of [`tile_new_window`] and [`retile_at_home`]: inserts
+/// `window` into `output`'s workspace `idx` tiling tree and reflows it.
+fn insert_into_tree<BackendData: Backend>(
+    state: &mut AnvilState<BackendData>,
+    window: &WindowElement,
+    output: &Output,
+    idx: usize,
+) {
+    let target = current_focused_window(state).filter(|w| TilingState::tree(output, idx).contains(w));
 
-    let area = tiling_area(&state.space, &output, state.config.gaps.outer as i32);
-    TilingState::tree_mut(&output, idx).insert(window.clone(), area, target.as_ref());
+    crate::shell::workspace::assign_new_window(window, output, false);
 
-    apply_layout(state, &output);
+    let area = tiling_area(&state.space, output, state.config.gaps.outer as i32);
+    TilingState::tree_mut(output, idx).insert(window.clone(), area, target.as_ref());
+
+    apply_layout(state, output);
     raise_and_focus(state, window);
+}
+
+/// Like [`tile_new_window`], but for a window that's already floating
+/// somewhere: re-tiles it onto whichever output/workspace it's currently
+/// homed to (see [`crate::shell::workspace::window_home`]) rather than
+/// wherever the pointer happens to be, so re-tiling a window on an inactive
+/// workspace (e.g. from a dock context menu) doesn't relocate it onto the
+/// output's active one. Falls back to [`tile_new_window`] at the pointer if
+/// the window has no home yet.
+fn retile_at_home<BackendData: Backend>(state: &mut AnvilState<BackendData>, window: &WindowElement) {
+    match crate::shell::workspace::window_home(window) {
+        Some((output, idx)) => insert_into_tree(state, window, &output, idx),
+        None => tile_new_window(state, window, state.pointer.current_location()),
+    }
 }
 
 /// Remove `window` from whichever output/workspace's tiling tree contains
@@ -838,6 +863,21 @@ pub fn toggle_floating<BackendData: Backend>(state: &mut AnvilState<BackendData>
         return;
     }
     tile_new_window(state, window, state.pointer.current_location());
+}
+
+/// Set whether `window` participates in tiling, a no-op if it's already in
+/// the requested state. Unlike [`toggle_floating`] (keybinding-driven, so it
+/// always targets the pointer/focus), re-tiling here targets the window's
+/// own home output/workspace (see [`retile_at_home`]) since this backs a
+/// client request (e.g. a dock context menu) that isn't necessarily acting
+/// on the window under the pointer.
+pub fn set_floating<BackendData: Backend>(state: &mut AnvilState<BackendData>, window: &WindowElement, floating: bool) {
+    let currently_tiled = locate(state, window).is_some();
+    if floating && currently_tiled {
+        untile_window(state, window);
+    } else if !floating && !currently_tiled {
+        retile_at_home(state, window);
+    }
 }
 
 /// Which side of `rect` is closest to `point`, for [`drop_target`]'s
