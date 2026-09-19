@@ -442,6 +442,17 @@ pub fn default_shortcuts() -> HashMap<String, Vec<String>> {
         // same way - the shell's picker overlay handles whole-display vs.
         // drag-to-select itself.
         ("shortcut:screenshot", vec!["print"]),
+        // Hardware media keys, fired to the shell's own named shortcuts
+        // (see caelestia-shell-iron's `services/Players.qml` for
+        // `mediaToggle`/`mediaPrev`/`mediaNext` and `modules/Shortcuts.qml`
+        // for `volumeMute`) the same way as `shortcut:launcher` above.
+        // `XF86AudioPlay`/`XF86AudioPause` both map to `mediaToggle` since
+        // keyboards vary in which one they actually send for a play/pause
+        // key.
+        ("shortcut:mediaToggle", vec!["XF86AudioPlay", "XF86AudioPause"]),
+        ("shortcut:mediaPrev", vec!["XF86AudioPrev"]),
+        ("shortcut:mediaNext", vec!["XF86AudioNext"]),
+        ("shortcut:volumeMute", vec!["XF86AudioMute"]),
         ("open_browser", vec!["super+b"]),
         ("open_file_manager", vec!["super+f"]),
         ("toggle_floating", vec!["super+shift+space"]),
