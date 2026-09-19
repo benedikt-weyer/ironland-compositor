@@ -95,6 +95,10 @@ pub fn write(doc: &mut DocumentMut, full: &FullConfig) {
         WorkspaceTransitionAxis::Vertical => "vertical",
     });
 
+    let window_animations = ensure_table(doc, "window_animations");
+    window_animations["enabled"] = value(cfg.window_animations.enabled);
+    window_animations["duration_ms"] = value(i64::from(cfg.window_animations.duration_ms));
+
     let mut shortcuts = Table::new();
     let mut action_names: Vec<&String> = cfg.shortcuts.keys().collect();
     action_names.sort();

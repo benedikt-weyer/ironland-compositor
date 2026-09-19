@@ -143,6 +143,29 @@ pub struct CursorSettings {
     pub size: Option<u32>,
 }
 
+/// Bouncy grow-in/reflow animation for windows entering or leaving the
+/// automatic tiling layout (see `shell::tiling` in the compositor crate -
+/// this crate only carries the plain setting, not the animation itself).
+/// Off by default, like every other opt-in visual effect this compositor
+/// ships (see [`BlurSettings`], [`CornersSettings`]).
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct WindowAnimationSettings {
+    pub enabled: bool,
+    /// How long the grow-in/reflow animation takes, in milliseconds. `0`
+    /// disables it even if `enabled` is true.
+    pub duration_ms: u32,
+}
+
+impl Default for WindowAnimationSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            duration_ms: 260,
+        }
+    }
+}
+
 /// Background blur shown through translucent application surfaces.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
@@ -331,6 +354,7 @@ struct RawConfig {
     shortcuts: HashMap<String, Vec<String>>,
     outputs: HashMap<String, OutputSettings>,
     workspaces: WorkspaceSettings,
+    window_animations: WindowAnimationSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -376,6 +400,9 @@ pub struct Config {
     pub outputs: HashMap<String, OutputSettings>,
     /// Virtual desktop settings (see [`WorkspaceSettings`]).
     pub workspaces: WorkspaceSettings,
+    /// Bouncy grow-in/reflow animation for auto-tiled windows (see
+    /// [`WindowAnimationSettings`]).
+    pub window_animations: WindowAnimationSettings,
 }
 
 impl Default for Config {
@@ -397,6 +424,7 @@ impl Default for Config {
             shortcuts: default_shortcuts(),
             outputs: HashMap::new(),
             workspaces: WorkspaceSettings::default(),
+            window_animations: WindowAnimationSettings::default(),
         }
     }
 }
@@ -650,6 +678,7 @@ impl Config {
                     shortcuts,
                     outputs: raw.outputs,
                     workspaces: raw.workspaces,
+                    window_animations: raw.window_animations,
                 },
                 Some(path),
             ));
@@ -732,6 +761,7 @@ mod tests {
             shortcuts,
             outputs: HashMap::new(),
             workspaces: WorkspaceSettings::default(),
+            window_animations: WindowAnimationSettings::default(),
         };
 
         let mut merged = default_shortcuts();
@@ -827,6 +857,26 @@ mod tests {
             BlurSettings {
                 enabled: true,
                 radius: 20
+            }
+        );
+    }
+
+    #[test]
+    fn window_animations_default_off_and_parse() {
+        assert_eq!(
+            WindowAnimationSettings::default(),
+            WindowAnimationSettings {
+                enabled: false,
+                duration_ms: 260
+            }
+        );
+        let raw: RawConfig =
+            toml::from_str("[window_animations]\nenabled = true\nduration_ms = 400\n").unwrap();
+        assert_eq!(
+            raw.window_animations,
+            WindowAnimationSettings {
+                enabled: true,
+                duration_ms: 400
             }
         );
     }

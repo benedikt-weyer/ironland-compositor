@@ -6,6 +6,7 @@
 //! individually floated (`toggle_floating`) to opt out of the layout entirely.
 
 use std::cell::{Ref, RefCell, RefMut};
+use std::time::{Duration, Instant};
 
 use smithay::{
     backend::input::InputTime,
@@ -473,6 +474,122 @@ impl TilingLayout {
     }
 }
 
+/// One window's in-flight "grow in" (newly tiled) or "reflow" (a sibling
+/// resizing/moving because another tile was inserted or removed) animation:
+/// purely a render-time transform (see `render::output_elements`) - the
+/// window's real, protocol-level size is always its final settled rect from
+/// the moment `apply_layout_animated` maps it; only how it's *drawn* eases
+/// from `from` to `to` in the meantime.
+#[derive(Debug, Clone)]
+struct RectAnim {
+    from: Rectangle<i32, Logical>,
+    to: Rectangle<i32, Logical>,
+    start: Instant,
+    duration: Duration,
+    /// True only for a window that wasn't mapped anywhere before (a
+    /// brand-new tile, not just a reflowing sibling) - fades in on top of
+    /// the shrink/grow, so a resizing sibling doesn't flicker translucent.
+    fade_in: bool,
+}
+
+/// Per-output registry of [`RectAnim`]s, stored the same way as
+/// [`crate::shell::workspace::WorkspaceTransitionSlot`] - interior-mutable
+/// output user data, so it's reachable from `render.rs`'s otherwise-`&self`
+/// render path.
+#[derive(Default)]
+struct TilingAnimSlot(RefCell<Vec<(WindowElement, RectAnim)>>);
+
+impl TilingAnimSlot {
+    fn get(output: &Output) -> &TilingAnimSlot {
+        output.user_data().insert_if_missing(TilingAnimSlot::default);
+        output.user_data().get::<TilingAnimSlot>().unwrap()
+    }
+}
+
+/// A slightly-shrunk, centered version of `rect` - the starting point for a
+/// brand-new tile's "grow in" animation.
+fn shrink_centered(rect: Rectangle<i32, Logical>) -> Rectangle<i32, Logical> {
+    const START_FRACTION: f32 = 0.82;
+    let new_w = ((rect.size.w as f32) * START_FRACTION).round() as i32;
+    let new_h = ((rect.size.h as f32) * START_FRACTION).round() as i32;
+    let dx = (rect.size.w - new_w) / 2;
+    let dy = (rect.size.h - new_h) / 2;
+    Rectangle::new(Point::from((rect.loc.x + dx, rect.loc.y + dy)), (new_w, new_h).into())
+}
+
+/// Eases out with no overshoot - used for the fade-in alpha of a brand-new
+/// tile, where any overshoot (a bounce past fully opaque) isn't meaningful.
+fn ease_out_cubic(t: f32) -> f32 {
+    let t = t - 1.0;
+    t * t * t + 1.0
+}
+
+/// Eases out with a bit of overshoot past the target before settling
+/// exactly on it at `t = 1.0` - the standard "back out" curve, tuned down
+/// from its usual default (`1.70158`) for a subtler bounce.
+fn ease_out_back(t: f32) -> f32 {
+    const C1: f32 = 1.4;
+    const C3: f32 = C1 + 1.0;
+    let t = t - 1.0;
+    1.0 + C3 * t * t * t + C1 * t * t
+}
+
+fn lerp_rect(from: Rectangle<i32, Logical>, to: Rectangle<i32, Logical>, t: f32) -> Rectangle<i32, Logical> {
+    let lerp = |a: i32, b: i32| (a as f32 + (b - a) as f32 * t).round() as i32;
+    Rectangle::new(
+        Point::from((lerp(from.loc.x, to.loc.x), lerp(from.loc.y, to.loc.y))),
+        (lerp(from.size.w, to.size.w), lerp(from.size.h, to.size.h)).into(),
+    )
+}
+
+/// Registers (or refreshes) `window`'s reflow animation on `output`: it just
+/// moved/resized from `previous` (`None` for a window that wasn't mapped
+/// anywhere before - it grows in from a shrunk version of `to` instead) to
+/// `to`. A no-op if `previous == Some(to)` already (nothing actually
+/// changed - the overwhelming common case, so this stays cheap).
+fn start_reflow(
+    output: &Output,
+    window: &WindowElement,
+    previous: Option<Rectangle<i32, Logical>>,
+    to: Rectangle<i32, Logical>,
+    duration: Duration,
+) {
+    let (from, fade_in) = match previous {
+        Some(from) if from == to => return,
+        Some(from) => (from, false),
+        None => (shrink_centered(to), true),
+    };
+    let mut anims = TilingAnimSlot::get(output).0.borrow_mut();
+    anims.retain(|(w, _)| w != window);
+    anims.push((
+        window.clone(),
+        RectAnim {
+            from,
+            to,
+            start: Instant::now(),
+            duration,
+            fade_in,
+        },
+    ));
+}
+
+/// `window`'s current eased (rect, alpha) if it has an in-flight animation
+/// on `output`, `None` otherwise (the common case, once the animation's
+/// `duration` has elapsed or it was never registered) - `render.rs` renders
+/// it scaled/relocated into `rect` at `alpha` instead of at its real,
+/// settled position when this returns `Some`. Also prunes any entry that
+/// has finished or gone stale (dead window) as a side effect, so nothing
+/// needs to sweep this separately once a frame.
+pub(crate) fn animated_rect(output: &Output, window: &WindowElement) -> Option<(Rectangle<i32, Logical>, f32)> {
+    let mut anims = TilingAnimSlot::get(output).0.borrow_mut();
+    anims.retain(|(w, a)| w.alive() && a.start.elapsed() < a.duration);
+    let (_, anim) = anims.iter().find(|(w, _)| w == window)?;
+    let t = (anim.start.elapsed().as_secs_f32() / anim.duration.as_secs_f32().max(0.001)).clamp(0.0, 1.0);
+    let rect = lerp_rect(anim.from, anim.to, ease_out_back(t));
+    let alpha = if anim.fade_in { ease_out_cubic(t) } else { 1.0 };
+    Some((rect, alpha))
+}
+
 /// Every one of an output's tiling trees, one per workspace, indexed by
 /// workspace number. Grows lazily as higher workspace indices are touched;
 /// entries are never removed (an empty [`TilingLayout`] is cheap and
@@ -708,6 +825,21 @@ fn warp_pointer_to<BackendData: Backend>(state: &mut AnvilState<BackendData>, wi
 /// current tree. Hidden workspaces are left untouched (and are up to date
 /// whenever they're next shown by [`crate::shell::workspace`]).
 pub fn apply_layout<BackendData: Backend>(state: &mut AnvilState<BackendData>, output: &Output) {
+    apply_layout_impl(state, output, false);
+}
+
+/// Like [`apply_layout`], but also registers a bouncy grow-in/reflow
+/// animation (see [`start_reflow`]) for every window whose rect actually
+/// changed - used by the handful of call sites that correspond to a window
+/// genuinely entering or leaving the tiling layout (as opposed to e.g. a
+/// workspace switch, which already has its own dedicated slide transition -
+/// see [`crate::shell::workspace::advance_transitions`] - and would fight
+/// with this one if both applied to the same reflow).
+pub(crate) fn apply_layout_animated<BackendData: Backend>(state: &mut AnvilState<BackendData>, output: &Output) {
+    apply_layout_impl(state, output, true);
+}
+
+fn apply_layout_impl<BackendData: Backend>(state: &mut AnvilState<BackendData>, output: &Output, animate: bool) {
     let idx = WorkspaceState::get(output).active();
     let area = tiling_area(&state.space, output, state.config.gaps.outer as i32);
     let rects = TilingState::tree(output, idx).layout(area, state.config.gaps.inner as i32);
@@ -715,12 +847,20 @@ pub fn apply_layout<BackendData: Backend>(state: &mut AnvilState<BackendData>, o
         .user_data()
         .get::<FullscreenSurface>()
         .and_then(|f| f.get());
+    let anim_duration = (animate
+        && state.config.window_animations.enabled
+        && state.config.window_animations.duration_ms > 0)
+        .then(|| Duration::from_millis(u64::from(state.config.window_animations.duration_ms)));
     for (window, rect) in rects {
         // A fullscreen window's toplevel size is driven by
         // `render::output_elements`/`shell::xdg`/`shell::x11`, not by its
         // tile slot - resizing it down here would fight whatever configure
         // made it fullscreen in the first place.
         if fullscreen.as_ref() != Some(&window) {
+            if let Some(duration) = anim_duration {
+                let previous = state.space.element_geometry(&window);
+                start_reflow(output, &window, previous, rect, duration);
+            }
             #[allow(irrefutable_let_patterns)]
             if let Some(toplevel) = window.0.toplevel() {
                 let changed = toplevel.with_pending_state(|s| {
@@ -820,7 +960,7 @@ fn insert_into_tree<BackendData: Backend>(
     let area = tiling_area(&state.space, output, state.config.gaps.outer as i32);
     TilingState::tree_mut(output, idx).insert(window.clone(), area, target.as_ref());
 
-    apply_layout(state, output);
+    apply_layout_animated(state, output);
     raise_and_focus(state, window);
 }
 
@@ -851,7 +991,7 @@ pub fn untile_window<BackendData: Backend>(state: &mut AnvilState<BackendData>, 
     if removed {
         crate::shell::workspace::mark_floating(state, window, &output, idx);
         if idx == WorkspaceState::get(&output).active() {
-            apply_layout(state, &output);
+            apply_layout_animated(state, &output);
         }
     }
     removed
@@ -964,7 +1104,7 @@ pub(crate) fn tile_dropped_window<BackendData: Backend>(
         }
     }
     crate::shell::workspace::assign_new_window(window, output, false);
-    apply_layout(state, output);
+    apply_layout_animated(state, output);
 }
 
 /// Re-flow every output's tiling tree, e.g. after output geometry changed
@@ -1004,7 +1144,7 @@ pub fn cleanup_dead<BackendData: Backend>(state: &mut AnvilState<BackendData>) -
             active_changed |= workspace_changed && idx == active;
         }
         if active_changed {
-            apply_layout(state, output);
+            apply_layout_animated(state, output);
         }
     }
     changed |= crate::shell::workspace::cleanup_dead(state);
@@ -1227,5 +1367,64 @@ mod drop_indicator_tests {
         assert_eq!(up.size.h + down.size.h, r.size.h);
         assert_eq!(up.loc.y, r.loc.y);
         assert_eq!(down.loc.y + down.size.h, r.loc.y + r.size.h);
+    }
+}
+
+#[cfg(test)]
+mod window_animation_tests {
+    use super::{ease_out_back, ease_out_cubic, lerp_rect, shrink_centered};
+    use smithay::utils::{Point, Rectangle};
+
+    fn rect() -> Rectangle<i32, smithay::utils::Logical> {
+        Rectangle::new(Point::from((100, 200)), (300, 400).into())
+    }
+
+    #[test]
+    fn ease_out_back_starts_at_zero_and_settles_exactly_at_one() {
+        assert!(ease_out_back(0.0).abs() < 1e-6);
+        assert!((ease_out_back(1.0) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ease_out_back_overshoots_past_one_before_settling() {
+        let max = (0..=100)
+            .map(|i| ease_out_back(i as f32 / 100.0))
+            .fold(0.0f32, f32::max);
+        assert!(max > 1.0, "expected some overshoot, got a peak of {max}");
+    }
+
+    #[test]
+    fn ease_out_cubic_has_no_overshoot() {
+        for i in 0..=100 {
+            let t = i as f32 / 100.0;
+            assert!(ease_out_cubic(t) <= 1.0 + f32::EPSILON);
+        }
+        assert!(ease_out_cubic(0.0).abs() < 1e-6);
+        assert!((ease_out_cubic(1.0) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn lerp_rect_hits_its_endpoints() {
+        let from = Rectangle::new(Point::from((0, 0)), (100, 100).into());
+        let to = rect();
+        assert_eq!(lerp_rect(from, to, 0.0), from);
+        assert_eq!(lerp_rect(from, to, 1.0), to);
+    }
+
+    #[test]
+    fn shrink_centered_keeps_the_same_center() {
+        let r = rect();
+        let shrunk = shrink_centered(r);
+        assert!(shrunk.size.w < r.size.w);
+        assert!(shrunk.size.h < r.size.h);
+        let center = |rect: Rectangle<i32, smithay::utils::Logical>| {
+            (rect.loc.x + rect.size.w / 2, rect.loc.y + rect.size.h / 2)
+        };
+        // Rounding from odd sizes can shift the center by a pixel - not
+        // exact equality, just "still roughly centered".
+        let (cx, cy) = center(r);
+        let (sx, sy) = center(shrunk);
+        assert!((cx - sx).abs() <= 1);
+        assert!((cy - sy).abs() <= 1);
     }
 }

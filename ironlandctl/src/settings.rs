@@ -81,6 +81,10 @@ pub enum SettingKey {
     WorkspacesDynamic,
     #[value(name = "workspaces.overlay")]
     WorkspacesOverlay,
+    #[value(name = "window_animations.enabled")]
+    WindowAnimationsEnabled,
+    #[value(name = "window_animations.duration_ms")]
+    WindowAnimationsDurationMs,
 }
 
 impl SettingKey {
@@ -124,6 +128,8 @@ impl SettingKey {
             WorkspacesCount,
             WorkspacesDynamic,
             WorkspacesOverlay,
+            WindowAnimationsEnabled,
+            WindowAnimationsDurationMs,
         ]
     }
 
@@ -165,6 +171,8 @@ impl SettingKey {
             WorkspacesCount => "workspaces.count",
             WorkspacesDynamic => "workspaces.dynamic",
             WorkspacesOverlay => "workspaces.overlay",
+            WindowAnimationsEnabled => "window_animations.enabled",
+            WindowAnimationsDurationMs => "window_animations.duration_ms",
         }
     }
 }
@@ -213,6 +221,8 @@ pub fn get(full: &FullConfig, key: SettingKey) -> String {
         WorkspacesCount => cfg.workspaces.count.to_string(),
         WorkspacesDynamic => cfg.workspaces.dynamic.to_string(),
         WorkspacesOverlay => cfg.workspaces.overlay.to_string(),
+        WindowAnimationsEnabled => cfg.window_animations.enabled.to_string(),
+        WindowAnimationsDurationMs => cfg.window_animations.duration_ms.to_string(),
     }
 }
 
@@ -296,6 +306,8 @@ fn table_and_leaf(key: SettingKey) -> (&'static [&'static str], &'static str) {
         WorkspacesCount => (&["workspaces"], "count"),
         WorkspacesDynamic => (&["workspaces"], "dynamic"),
         WorkspacesOverlay => (&["workspaces"], "overlay"),
+        WindowAnimationsEnabled => (&["window_animations"], "enabled"),
+        WindowAnimationsDurationMs => (&["window_animations"], "duration_ms"),
     }
 }
 
@@ -336,6 +348,7 @@ pub fn set(doc: &mut DocumentMut, key: SettingKey, raw: &str) -> Result<()> {
         | PerformanceStutterLog
         | WorkspacesDynamic
         | WorkspacesOverlay
+        | WindowAnimationsEnabled
         | AppearanceDarkMode => {
             table[leaf] = value(parse_bool(raw)?);
         }
@@ -403,6 +416,13 @@ pub fn set(doc: &mut DocumentMut, key: SettingKey, raw: &str) -> Result<()> {
         }
         PerformanceFpsOverlayIntervalMs => {
             table[leaf] = value(i64::from(parse_u32(raw)?));
+        }
+        WindowAnimationsDurationMs => {
+            let duration = parse_u32(raw)?;
+            if duration > 2000 {
+                bail!("duration must be at most 2000ms, got {duration}");
+            }
+            table[leaf] = value(i64::from(duration));
         }
     }
     Ok(())

@@ -15,7 +15,7 @@ use smithay::{
     desktop::{
         LayerSurface, layer_map_for_output,
         space::{
-            ConstrainBehavior, ConstrainReference, Space, SpaceRenderElements,
+            ConstrainBehavior, ConstrainReference, Space, SpaceElement, SpaceRenderElements,
             constrain_space_element,
         },
     },
@@ -29,7 +29,7 @@ use crate::drawing::FpsElement;
 use crate::{
     drawing::{CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement},
     rounded_corners::GlesCapable,
-    shell::{FullscreenSurface, WindowElement, WindowRenderElement},
+    shell::{FullscreenSurface, WindowElement, WindowRenderElement, tiling},
 };
 
 /// Border thickness (logical pixels) of the tiling drag-and-drop indicator.
@@ -280,12 +280,53 @@ where
             }
         }
 
-        output_render_elements.extend(
-            space
-                .render_elements_for_region(renderer, &output_geometry, output_scale, 1.0)
-                .into_iter()
-                .map(|element| OutputRenderElements::Window(Wrap::from(element))),
-        );
+        // Same result as `space.render_elements_for_region(renderer,
+        // &output_geometry, output_scale, 1.0)` for every window with no
+        // in-flight tiling animation (the overwhelming common case) - done
+        // by hand, one window at a time, only so a window `tiling::
+        // animated_rect` says is mid grow-in/reflow can be rendered
+        // scaled/relocated into its current eased rect instead (see
+        // `crate::shell::tiling`), which `Space`'s own helper has no hook
+        // for.
+        for window in space.elements_for_output(output).rev() {
+            let Some(element_location) = space.element_location(window) else {
+                continue;
+            };
+            let geometry_offset = SpaceElement::geometry(window).loc;
+
+            if let Some((anim_rect, alpha)) = tiling::animated_rect(output, window) {
+                let location = element_location - output_geometry.loc;
+                let constrain = Rectangle::new(anim_rect.loc - output_geometry.loc, anim_rect.size);
+                output_render_elements.extend(constrain_space_element(
+                    renderer,
+                    window,
+                    location,
+                    alpha,
+                    output_scale,
+                    constrain,
+                    ConstrainBehavior {
+                        reference: ConstrainReference::Geometry,
+                        behavior: ConstrainScaleBehavior::Stretch,
+                        align: ConstrainAlign::CENTER,
+                    },
+                ));
+            } else {
+                let render_location = (element_location - geometry_offset - output_geometry.loc)
+                    .to_physical_precise_round(output_scale);
+                let elements: Vec<WindowRenderElement<R>> = AsRenderElements::<R>::render_elements(
+                    window,
+                    renderer,
+                    render_location,
+                    Scale::from(output_scale),
+                    1.0,
+                );
+                output_render_elements.extend(
+                    elements
+                        .into_iter()
+                        .map(|element| OutputRenderElements::Window(Wrap::from(element))),
+                );
+            }
+        }
 
         // Place a cropped blurred wallpaper immediately behind each window.
         // Opaque application pixels cover it completely; alpha-bearing pixels

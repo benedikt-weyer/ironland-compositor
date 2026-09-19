@@ -797,7 +797,7 @@ pub fn move_focused_window<B: Backend>(state: &mut AnvilState<B>, delta: i32, fo
         tiling::TilingState::tree_mut(&output, target_idx).insert(window.clone(), area, None);
         // Reflows the source workspace (still active) to close the gap the
         // window left; the destination tree is applied whenever it's shown.
-        tiling::apply_layout(state, &output);
+        tiling::apply_layout_animated(state, &output);
         state.space.unmap_elem(&window);
     } else {
         WorkspaceState::get(&output)
