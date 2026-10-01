@@ -135,7 +135,19 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             KeyAction::Run(cmd) => {
                 info!(cmd, "Starting program");
 
-                let mut command = Command::new(&cmd);
+                // Routed through the user's login shell rather than
+                // exec'd directly: the compositor's own process
+                // environment is whatever its systemd unit was started
+                // with, which can have a stripped-down PATH (and miss
+                // other session-wide env the user's shell rc/profile
+                // sets up). `-lc` re-sources that profile so spawned
+                // programs see the same environment they would from a
+                // normal interactive shell - matching the companion
+                // shell's own app launcher, which wraps every launch the
+                // same way for the same reason.
+                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+                let mut command = Command::new(&shell);
+                command.arg("-lc").arg(&cmd);
                 self.apply_compositor_envs(&mut command);
                 if let Err(e) = command.spawn() {
                     error!(cmd, err = %e, "Failed to start program");
