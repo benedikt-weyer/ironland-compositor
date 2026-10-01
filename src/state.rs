@@ -1440,9 +1440,13 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
     pub fn start_xwayland(&mut self, on_settled: impl FnOnce(&mut Self) + 'static) {
         use std::process::Stdio;
 
+        use std::{cell::RefCell, rc::Rc};
+
+        use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
         use smithay::wayland::compositor::CompositorHandler;
 
-        let mut on_settled = Some(on_settled);
+        type SettledCallback<S> = Rc<RefCell<Option<Box<dyn FnOnce(&mut S)>>>>;
+        let on_settled: SettledCallback<Self> = Rc::new(RefCell::new(Some(Box::new(on_settled))));
         let (xwayland, client) = XWayland::spawn(
             &self.display_handle,
             None,
@@ -1450,12 +1454,14 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             std::iter::empty::<String>(),
             true,
             Stdio::null(),
-            Stdio::null(),
+            Stdio::inherit(),
             |_| (),
         )
         .expect("failed to start XWayland");
 
         let display_handle = self.display_handle.clone();
+        let client_id = client.id();
+        let settled = on_settled.clone();
         let ret = self
             .handle
             .insert_source(xwayland, move |event, _, data| match event {
@@ -1488,23 +1494,56 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
                     data.xwm = Some(wm);
                     data.xdisplay = Some(display_number);
                     crate::session::announce_xwayland_ready(display_number);
-                    if let Some(on_settled) = on_settled.take() {
+                    if let Some(on_settled) = settled.borrow_mut().take() {
                         on_settled(data);
                     }
                 }
                 XWaylandEvent::Error => {
                     warn!("XWayland crashed on startup");
-                    if let Some(on_settled) = on_settled.take() {
+                    if let Some(on_settled) = settled.borrow_mut().take() {
                         on_settled(data);
                     }
                 }
             });
-        if let Err(e) = ret {
-            tracing::error!(
-                "Failed to insert the XWaylandSource into the event loop: {}",
-                e
-            );
-        }
+        let token = match ret {
+            Ok(token) => token,
+            Err(e) => {
+                tracing::error!(
+                    "Failed to insert the XWaylandSource into the event loop: {}",
+                    e
+                );
+                return;
+            }
+        };
+
+        // Smithay's XWayland source never reports a child that dies before
+        // writing its displayfd: the pipe hits EOF, `take_socket` maps that
+        // to "not ready yet", and the level-triggered source stays readable
+        // forever - the event loop then spins a full core and `on_settled`
+        // never fires. Watch for the client disappearing before XWayland
+        // became ready and tear the source down ourselves.
+        let _ = self.handle.insert_source(
+            Timer::from_duration(Duration::from_millis(250)),
+            move |_, _, data| {
+                if data.xwm.is_some() || on_settled.borrow().is_none() {
+                    return TimeoutAction::Drop;
+                }
+                if data
+                    .display_handle
+                    .backend_handle()
+                    .get_client_data(client_id.clone())
+                    .is_ok()
+                {
+                    return TimeoutAction::ToDuration(Duration::from_millis(250));
+                }
+                warn!("XWayland exited before becoming ready; running without X11 support");
+                data.handle.remove(token);
+                if let Some(on_settled) = on_settled.borrow_mut().take() {
+                    on_settled(data);
+                }
+                TimeoutAction::Drop
+            },
+        );
     }
 }
 
