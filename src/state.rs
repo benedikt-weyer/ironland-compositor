@@ -320,6 +320,16 @@ pub struct AnvilState<BackendData: Backend + 'static> {
         crate::input_handler::KeyAction,
     )>,
 
+    /// Resolved touchpad gesture bindings (see
+    /// `input_handler::compile_gesture_bindings`).
+    pub(crate) gesture_bindings: Vec<(
+        crate::config::Gesture,
+        crate::input_handler::KeyAction,
+    )>,
+    /// The touchpad gesture the compositor has claimed for a binding and is
+    /// currently measuring, instead of forwarding to clients.
+    pub(crate) gesture_tracker: Option<crate::input_handler::GestureTracker>,
+
     /// Action to fire when the Super key is tapped alone (see
     /// `keybindings::super_tap_action`), if one is configured.
     pub(crate) super_tap_action: Option<crate::input_handler::KeyAction>,
@@ -979,6 +989,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         let config = crate::config::Config::load();
         let keybindings = crate::input_handler::compile_keybindings(&config);
         let super_tap_action = crate::input_handler::compile_super_tap_action(&config);
+        let gesture_bindings = crate::input_handler::compile_gesture_bindings(&config);
 
         // init wayland clients
         let socket_name = if listen_on_socket {
@@ -1213,6 +1224,8 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             drop_indicator_cache: HashMap::new(),
             tiling_drop_indicator: None,
             keybindings,
+            gesture_bindings,
+            gesture_tracker: None,
             super_tap_action,
             super_tap_pending: None,
             config,
@@ -1314,6 +1327,8 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         self.keybindings = crate::input_handler::compile_keybindings(&new_config);
         self.super_tap_action = crate::input_handler::compile_super_tap_action(&new_config);
         self.super_tap_pending = None;
+        self.gesture_bindings = crate::input_handler::compile_gesture_bindings(&new_config);
+        self.gesture_tracker = None;
 
         if new_config.wallpaper != old_config.wallpaper {
             self.wallpaper = crate::wallpaper::Wallpaper::load(new_config.wallpaper.as_deref());

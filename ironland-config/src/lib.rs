@@ -352,6 +352,7 @@ struct RawConfig {
     focus: FocusSettings,
     performance: PerformanceSettings,
     shortcuts: HashMap<String, Vec<String>>,
+    gestures: HashMap<String, Vec<String>>,
     outputs: HashMap<String, OutputSettings>,
     workspaces: WorkspaceSettings,
     window_animations: WindowAnimationSettings,
@@ -394,6 +395,13 @@ pub struct Config {
     /// Always fully populated: entries not overridden by the config file
     /// keep their built-in default.
     pub shortcuts: HashMap<String, Vec<String>>,
+    /// action name -> touchpad gesture specs, e.g. `"workspace_right" ->
+    /// ["swipe:3:left"]` (see [`parse_gesture`] for the spec format). Takes
+    /// the same action names as `shortcuts` (including `shortcut:<name>`).
+    /// Always fully populated like `shortcuts`: entries not overridden by
+    /// the config file keep their built-in default.
+    #[serde(default = "default_gestures")]
+    pub gestures: HashMap<String, Vec<String>>,
     /// connector name (e.g. `"eDP-1"`) -> settings for that output. Outputs
     /// not present here use [`OutputSettings::default`] (auto-placed,
     /// extended, not primary).
@@ -422,6 +430,7 @@ impl Default for Config {
             focus: FocusSettings::default(),
             performance: PerformanceSettings::default(),
             shortcuts: default_shortcuts(),
+            gestures: default_gestures(),
             outputs: HashMap::new(),
             workspaces: WorkspaceSettings::default(),
             window_animations: WindowAnimationSettings::default(),
@@ -528,6 +537,81 @@ pub fn default_shortcuts() -> HashMap<String, Vec<String>> {
             keys.into_iter().map(String::from).collect(),
         )
     })
+    .collect()
+}
+
+/// Direction of a touchpad swipe, as the direction the fingers travel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SwipeDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+/// A touchpad gesture a binding can trigger on. Only discrete, one-shot
+/// gestures are bindable: the action fires once when the gesture ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Gesture {
+    /// Multi-finger swipe, e.g. `swipe:3:left`.
+    Swipe { fingers: u32, direction: SwipeDirection },
+    /// Multi-finger pinch, e.g. `pinch:2:in` (fingers moving together) or
+    /// `pinch:2:out` (fingers spreading apart).
+    Pinch { fingers: u32, zoom_in: bool },
+}
+
+impl Gesture {
+    /// Number of fingers the gesture needs, used to decide whether the
+    /// compositor claims a gesture from the moment it begins.
+    pub fn fingers(&self) -> u32 {
+        match *self {
+            Gesture::Swipe { fingers, .. } | Gesture::Pinch { fingers, .. } => fingers,
+        }
+    }
+}
+
+/// Parses a gesture spec: `swipe:<fingers>:<left|right|up|down>` or
+/// `pinch:<fingers>:<in|out>`. Finger count must be 2-5 for pinch and 3-5
+/// for swipe (2-finger swipes are scrolling).
+pub fn parse_gesture(spec: &str) -> Option<Gesture> {
+    let mut parts = spec.split(':').map(|p| p.trim().to_ascii_lowercase());
+    let kind = parts.next()?;
+    let fingers: u32 = parts.next()?.parse().ok()?;
+    let arg = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+
+    match kind.as_str() {
+        "swipe" if (3..=5).contains(&fingers) => {
+            let direction = match arg.as_str() {
+                "left" => SwipeDirection::Left,
+                "right" => SwipeDirection::Right,
+                "up" => SwipeDirection::Up,
+                "down" => SwipeDirection::Down,
+                _ => return None,
+            };
+            Some(Gesture::Swipe { fingers, direction })
+        }
+        "pinch" if (2..=5).contains(&fingers) => match arg.as_str() {
+            "in" => Some(Gesture::Pinch { fingers, zoom_in: true }),
+            "out" => Some(Gesture::Pinch { fingers, zoom_in: false }),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Built-in touchpad gestures: three-finger horizontal swipes switch
+/// workspaces, with the content following the fingers (swipe left to reveal
+/// the workspace on the right).
+pub fn default_gestures() -> HashMap<String, Vec<String>> {
+    [
+        ("workspace_left", vec!["swipe:3:right"]),
+        ("workspace_right", vec!["swipe:3:left"]),
+    ]
+    .into_iter()
+    .map(|(name, specs)| (name.to_string(), specs.into_iter().map(String::from).collect()))
     .collect()
 }
 
@@ -660,6 +744,9 @@ impl Config {
             let mut shortcuts = default_shortcuts();
             shortcuts.extend(raw.shortcuts);
 
+            let mut gestures = default_gestures();
+            gestures.extend(raw.gestures);
+
             return Ok((
                 Config {
                     keyboard: raw.keyboard,
@@ -676,6 +763,7 @@ impl Config {
                     focus: raw.focus,
                     performance: raw.performance,
                     shortcuts,
+                    gestures,
                     outputs: raw.outputs,
                     workspaces: raw.workspaces,
                     window_animations: raw.window_animations,
@@ -759,6 +847,7 @@ mod tests {
             focus: FocusSettings::default(),
             performance: PerformanceSettings::default(),
             shortcuts,
+            gestures: HashMap::new(),
             outputs: HashMap::new(),
             workspaces: WorkspaceSettings::default(),
             window_animations: WindowAnimationSettings::default(),
@@ -969,6 +1058,44 @@ mod tests {
         assert_eq!(raw.performance.stutter_threshold_ms, 20.0);
         assert!(!raw.performance.stutter_log);
         assert_eq!(raw.performance.fps_overlay_interval_ms, 1000);
+    }
+
+    #[test]
+    fn parses_gesture_specs() {
+        assert_eq!(
+            parse_gesture("swipe:3:left"),
+            Some(Gesture::Swipe { fingers: 3, direction: SwipeDirection::Left })
+        );
+        assert_eq!(
+            parse_gesture(" Pinch:2:IN "),
+            Some(Gesture::Pinch { fingers: 2, zoom_in: true })
+        );
+        assert_eq!(parse_gesture("swipe:2:left"), None);
+        assert_eq!(parse_gesture("swipe:3:sideways"), None);
+        assert_eq!(parse_gesture("pinch:3:left"), None);
+        assert_eq!(parse_gesture("swipe:3"), None);
+        assert_eq!(parse_gesture("swipe:3:left:x"), None);
+    }
+
+    #[test]
+    fn default_gestures_use_known_actions_and_parse() {
+        let known = known_actions();
+        for (action, specs) in default_gestures() {
+            assert!(known.contains(&action.as_str()), "{action}");
+            for spec in specs {
+                assert!(parse_gesture(&spec).is_some(), "{spec}");
+            }
+        }
+    }
+
+    #[test]
+    fn gestures_table_overrides_defaults_per_action() {
+        let raw: RawConfig =
+            toml::from_str("[gestures]\nworkspace_left = [\"swipe:4:right\"]\n").unwrap();
+        let mut merged = default_gestures();
+        merged.extend(raw.gestures);
+        assert_eq!(merged["workspace_left"], vec!["swipe:4:right"]);
+        assert_eq!(merged["workspace_right"], vec!["swipe:3:left"]);
     }
 
     #[test]

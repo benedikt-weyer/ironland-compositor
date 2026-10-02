@@ -108,6 +108,15 @@ pub fn write(doc: &mut DocumentMut, full: &FullConfig) {
     }
     doc["shortcuts"] = Item::Table(shortcuts);
 
+    let mut gestures = Table::new();
+    let mut gesture_actions: Vec<&String> = cfg.gestures.keys().collect();
+    gesture_actions.sort();
+    for name in gesture_actions {
+        let specs: Array = cfg.gestures[name].iter().map(String::as_str).collect();
+        gestures[name.as_str()] = value(specs);
+    }
+    doc["gestures"] = Item::Table(gestures);
+
     let mut outputs = Table::new();
     let mut output_names: Vec<&String> = cfg.outputs.keys().collect();
     output_names.sort();

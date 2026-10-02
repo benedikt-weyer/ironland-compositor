@@ -146,6 +146,7 @@ type Config struct {
 	Performance PerformanceSettings       `json:"performance"`
 	Appearance  AppearanceSettings        `json:"appearance"`
 	Shortcuts   map[string][]string       `json:"shortcuts"`
+	Gestures    map[string][]string       `json:"gestures"` // no GUI tab yet; carried through so saving doesn't drop it
 	Outputs     map[string]OutputSettings `json:"outputs"`
 	Workspaces  WorkspaceSettings         `json:"workspaces"`
 }
