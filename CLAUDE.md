@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`ironland-compositor` is a Wayland compositor built on [Smithay](https://github.com/Smithay/smithay) (git dependency, pinned by rev in `Cargo.toml`), originally derived from Smithay's `anvil` example (`AnvilState` in `src/state.rs`). It's designed to pair with a companion shell called molunga-shell (built on Quickshell), and ships two small companion binaries plus a Go settings GUI alongside the compositor itself.
+`ironland-compositor` is a Wayland compositor built on [Smithay](https://github.com/Smithay/smithay) (git dependency, pinned by rev in `Cargo.toml`), originally derived from Smithay's `anvil` example (`AnvilState` in `src/state/mod.rs`). It's designed to pair with a companion shell called molunga-shell (built on Quickshell), and ships two small companion binaries plus a Go settings GUI alongside the compositor itself.
 
 The repo is developed inside a Nix flake / direnv environment (`.envrc` runs `use flake` and adds `scripts/` to `PATH`).
 
@@ -30,10 +30,10 @@ There is no CI config in this repo (no `.github/workflows`); the closest thing i
 
 ### Crate layout
 
-`src/` is grouped into `backend/`, `input/`, `protocols/`, `render/`, `ui/` and `shell/`. `lib.rs` re-exports the leaf modules at the crate root, so `crate::foo::` paths (e.g. `crate::wallpaper`) still resolve.
+`src/` is grouped into `backend/`, `input/`, `protocols/`, `render/`, `ui/` and `shell/`. `lib.rs` re-exports the leaf modules at the crate root, so `crate::foo::` paths (e.g. `crate::wallpaper`) still resolve. The three largest files are split into submodule directories sharing the parent's imports via `use super::*`: `state/` (`handlers.rs` = Smithay handler trait impls, `config.rs`, `repaint.rs`), `backend/udev/` (`device.rs` = DRM device/connector lifecycle, `render.rs`), `input/input_handler/` (`keyboard`, `pointer`, `touch`, `tablet_tool`, `gestures`, `actions`, `windowed`).
 
 - `src/main.rs` — parses `--winit`/`--tty-udev` and dispatches to `winit::run_winit()` / `udev::run_udev()`.
-- `src/state.rs` — `AnvilState<BackendData>`, the central compositor state struct and the hub that Smithay's handler traits (`CompositorHandler`, `SeatHandler`, etc.) are implemented on. Almost every subsystem module is reached through fields/methods on this type.
+- `src/state/mod.rs` — `AnvilState<BackendData>`, the central compositor state struct and the hub that Smithay's handler traits (`CompositorHandler`, `SeatHandler`, etc.) are implemented on. Almost every subsystem module is reached through fields/methods on this type.
 - `src/backend/winit.rs` / `src/backend/udev.rs` — the two backends selectable at runtime, plus `src/backend/x11.rs` (feature-gated) for an X11 backend. `winit` nests in an existing session for development; `udev` runs standalone using DRM/KMS + libinput and needs `backend/session.rs`.
 - `src/shell/` — window management: `xdg.rs` (native Wayland toplevels/popups), `x11.rs` (XWayland client handling — X11 windows tile the same as native toplevels via `tiling::should_tile_x11`; dialogs/utility/fixed-size windows opt out and stay floating), `tiling.rs` (automatic BSP/"dwindle" layout, Hyprland-style, one tree per output), `workspace.rs` (virtual desktops layered on top of tiling; per-output, with `PerMonitor` vs `Combined` switching modes and optional dynamic growth), `grabs.rs`/`ssd.rs`/`element.rs` (move/resize grabs, server-side decorations, the generic window element type).
 - `src/config.rs` — user settings (keyboard layout + shortcuts) loaded from a TOML file, checked in this priority order: `$IRONLAND_COMPOSITOR_CONFIG` → `$XDG_CONFIG_HOME/ironland-compositor/config.toml` → `/etc/ironland-compositor/config.toml` (written by the NixOS module) → hardcoded defaults. A malformed file is logged and ignored, not fatal.
