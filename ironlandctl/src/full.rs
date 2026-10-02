@@ -4,6 +4,7 @@
 //! than one changed field.
 
 use ironland_config::{FullConfig, OutputPosition, WorkspaceMode, WorkspaceTransitionAxis};
+use crate::settings::caps_lock_str;
 use toml_edit::{Array, DocumentMut, Item, Table, value};
 
 fn ensure_table<'a>(doc: &'a mut DocumentMut, key: &str) -> &'a mut Table {
@@ -35,6 +36,7 @@ pub fn write(doc: &mut DocumentMut, full: &FullConfig) {
     keyboard["layout"] = value(cfg.keyboard.layout.as_str());
     keyboard["variant"] = value(cfg.keyboard.variant.as_str());
     keyboard["options"] = value(cfg.keyboard.options.as_str());
+    keyboard["caps_lock"] = value(caps_lock_str(cfg.keyboard.caps_lock));
 
     let blur = ensure_table(doc, "blur");
     blur["enabled"] = value(cfg.blur.enabled);

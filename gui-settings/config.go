@@ -19,6 +19,8 @@ type KeyboardSettings struct {
 	Layout  string `json:"layout"`
 	Variant string `json:"variant"`
 	Options string `json:"options"`
+	// CapsLock reassigns Caps Lock: "off", "ctrl" or "level3" (AltGr).
+	CapsLock string `json:"caps_lock"`
 }
 
 // AppearanceSettings is GUI-only state: the compositor itself has no notion

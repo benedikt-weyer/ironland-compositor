@@ -26,6 +26,32 @@ use std::{collections::HashMap, env, fs, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+/// What the Caps Lock key is reassigned to. Applied as an extra XKB option
+/// on top of [`KeyboardSettings::options`], so it can be toggled without
+/// hand-editing the options string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CapsLockRemap {
+    /// Caps Lock keeps its normal behavior.
+    #[default]
+    Off,
+    /// Caps Lock acts as an additional Ctrl key (`ctrl:nocaps`).
+    Ctrl,
+    /// Caps Lock acts as the Level-3 shift, i.e. AltGr (`lv3:caps_switch`).
+    Level3,
+}
+
+impl CapsLockRemap {
+    /// The XKB option implementing this remap, if any.
+    pub fn xkb_option(self) -> Option<&'static str> {
+        match self {
+            CapsLockRemap::Off => None,
+            CapsLockRemap::Ctrl => Some("ctrl:nocaps"),
+            CapsLockRemap::Level3 => Some("lv3:caps_switch"),
+        }
+    }
+}
+
 /// Keyboard layout settings, passed straight through to xkbcommon.
 ///
 /// An empty string for any field means "let xkbcommon fall back to its
@@ -38,6 +64,8 @@ pub struct KeyboardSettings {
     pub layout: String,
     pub variant: String,
     pub options: String,
+    /// Reassigns Caps Lock; see [`CapsLockRemap`].
+    pub caps_lock: CapsLockRemap,
 }
 
 /// Where to place an output relative to another, already-placed one, or at

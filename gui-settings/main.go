@@ -99,6 +99,24 @@ func buildKeyboardTab(cfg *Config) fyne.CanvasObject {
 	options.SetPlaceHolder("e.g. caps:swapescape (optional)")
 	options.OnChanged = func(s string) { cfg.Keyboard.Options = s; resets.refresh() }
 
+	capsLabels := map[string]string{
+		"off":    "Normal Caps Lock",
+		"ctrl":   "Ctrl",
+		"level3": "Level 3 shift (AltGr)",
+	}
+	capsSelect := widget.NewSelect(
+		[]string{capsLabels["off"], capsLabels["ctrl"], capsLabels["level3"]},
+		func(selected string) {
+			for value, label := range capsLabels {
+				if label == selected {
+					cfg.Keyboard.CapsLock = value
+				}
+			}
+			resets.refresh()
+		},
+	)
+	capsSelect.SetSelected(capsLabels[cfg.Keyboard.CapsLock])
+
 	rules := widget.NewEntry()
 	rules.SetText(cfg.Keyboard.Rules)
 	rules.SetPlaceHolder("advanced: xkb rules file (usually leave empty)")
@@ -127,6 +145,7 @@ func buildKeyboardTab(cfg *Config) fyne.CanvasObject {
 		widget.NewFormItem("Variant", resets.item(variant, func() bool { return cfg.Keyboard.Variant != defaults.Keyboard.Variant }, func() { variant.SetText(defaults.Keyboard.Variant) })),
 		widget.NewFormItem("Model", resets.item(model, func() bool { return cfg.Keyboard.Model != defaults.Keyboard.Model }, func() { model.SetText(defaults.Keyboard.Model) })),
 		widget.NewFormItem("Options", resets.item(options, func() bool { return cfg.Keyboard.Options != defaults.Keyboard.Options }, func() { options.SetText(defaults.Keyboard.Options) })),
+		widget.NewFormItem("Caps Lock acts as", resets.item(capsSelect, func() bool { return cfg.Keyboard.CapsLock != defaults.Keyboard.CapsLock }, func() { capsSelect.SetSelected(capsLabels[defaults.Keyboard.CapsLock]) })),
 		widget.NewFormItem("Rules", resets.item(rules, func() bool { return cfg.Keyboard.Rules != defaults.Keyboard.Rules }, func() { rules.SetText(defaults.Keyboard.Rules) })),
 		widget.NewFormItem("Terminal command", resets.item(terminal, func() bool { return cfg.Terminal != defaults.Terminal }, func() { terminal.SetText(defaults.Terminal) })),
 		widget.NewFormItem("Browser command", resets.item(browser, func() bool { return cfg.Browser != defaults.Browser }, func() { browser.SetText(defaults.Browser) })),

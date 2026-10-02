@@ -31,6 +31,8 @@ pub enum SettingKey {
     KeyboardVariant,
     #[value(name = "keyboard.options")]
     KeyboardOptions,
+    #[value(name = "keyboard.caps_lock")]
+    KeyboardCapsLock,
     #[value(name = "blur.enabled")]
     BlurEnabled,
     #[value(name = "blur.radius")]
@@ -103,6 +105,7 @@ impl SettingKey {
             KeyboardLayout,
             KeyboardVariant,
             KeyboardOptions,
+            KeyboardCapsLock,
             BlurEnabled,
             BlurRadius,
             CornersEnabled,
@@ -146,6 +149,7 @@ impl SettingKey {
             KeyboardLayout => "keyboard.layout",
             KeyboardVariant => "keyboard.variant",
             KeyboardOptions => "keyboard.options",
+            KeyboardCapsLock => "keyboard.caps_lock",
             BlurEnabled => "blur.enabled",
             BlurRadius => "blur.radius",
             CornersEnabled => "corners.enabled",
@@ -194,6 +198,7 @@ pub fn get(full: &FullConfig, key: SettingKey) -> String {
         KeyboardLayout => cfg.keyboard.layout.clone(),
         KeyboardVariant => cfg.keyboard.variant.clone(),
         KeyboardOptions => cfg.keyboard.options.clone(),
+        KeyboardCapsLock => caps_lock_str(cfg.keyboard.caps_lock).to_string(),
         BlurEnabled => cfg.blur.enabled.to_string(),
         BlurRadius => cfg.blur.radius.to_string(),
         CornersEnabled => cfg.corners.enabled.to_string(),
@@ -223,6 +228,15 @@ pub fn get(full: &FullConfig, key: SettingKey) -> String {
         WorkspacesOverlay => cfg.workspaces.overlay.to_string(),
         WindowAnimationsEnabled => cfg.window_animations.enabled.to_string(),
         WindowAnimationsDurationMs => cfg.window_animations.duration_ms.to_string(),
+    }
+}
+
+pub(crate) fn caps_lock_str(remap: ironland_config::CapsLockRemap) -> &'static str {
+    use ironland_config::CapsLockRemap::*;
+    match remap {
+        Off => "off",
+        Ctrl => "ctrl",
+        Level3 => "level3",
     }
 }
 
@@ -281,6 +295,7 @@ fn table_and_leaf(key: SettingKey) -> (&'static [&'static str], &'static str) {
         KeyboardLayout => (&["keyboard"], "layout"),
         KeyboardVariant => (&["keyboard"], "variant"),
         KeyboardOptions => (&["keyboard"], "options"),
+        KeyboardCapsLock => (&["keyboard"], "caps_lock"),
         BlurEnabled => (&["blur"], "enabled"),
         BlurRadius => (&["blur"], "radius"),
         CornersEnabled => (&["corners"], "enabled"),
@@ -377,6 +392,15 @@ pub fn set(doc: &mut DocumentMut, key: SettingKey, raw: &str) -> Result<()> {
         }
         CursorSize => {
             table[leaf] = value(i64::from(parse_u32(raw)?));
+        }
+        KeyboardCapsLock => {
+            let remap = match raw {
+                "off" => "off",
+                "ctrl" => "ctrl",
+                "level3" => "level3",
+                other => bail!("expected off, ctrl or level3, got {other:?}"),
+            };
+            table[leaf] = value(remap);
         }
         WorkspacesMode => {
             let mode = match raw {

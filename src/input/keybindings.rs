@@ -50,11 +50,18 @@ pub fn to_xkb_config(settings: &KeyboardSettings) -> XkbConfig<'_> {
         model: &settings.model,
         layout: &settings.layout,
         variant: &settings.variant,
-        options: if settings.options.is_empty() {
-            None
-        } else {
-            Some(settings.options.clone())
-        },
+        options: xkb_options(settings),
+    }
+}
+
+/// `options` plus the XKB option implied by `caps_lock`, comma-separated.
+fn xkb_options(settings: &KeyboardSettings) -> Option<String> {
+    let extra = settings.caps_lock.xkb_option();
+    match (settings.options.is_empty(), extra) {
+        (true, None) => None,
+        (true, Some(extra)) => Some(extra.to_owned()),
+        (false, None) => Some(settings.options.clone()),
+        (false, Some(extra)) => Some(format!("{},{extra}", settings.options)),
     }
 }
 
@@ -282,7 +289,23 @@ fn parse_key_name(name: &str, shift: bool) -> Option<Keysym> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ironland_config::default_shortcuts;
+    use ironland_config::{CapsLockRemap, default_shortcuts};
+
+    #[test]
+    fn caps_lock_remap_extends_xkb_options() {
+        let mut kb = KeyboardSettings::default();
+        assert_eq!(xkb_options(&kb), None);
+        kb.caps_lock = CapsLockRemap::Ctrl;
+        assert_eq!(xkb_options(&kb).as_deref(), Some("ctrl:nocaps"));
+        kb.options = "grp:alt_shift_toggle".into();
+        kb.caps_lock = CapsLockRemap::Level3;
+        assert_eq!(
+            xkb_options(&kb).as_deref(),
+            Some("grp:alt_shift_toggle,lv3:caps_switch")
+        );
+        kb.caps_lock = CapsLockRemap::Off;
+        assert_eq!(xkb_options(&kb).as_deref(), Some("grp:alt_shift_toggle"));
+    }
 
     #[test]
     fn parses_simple_binding() {
