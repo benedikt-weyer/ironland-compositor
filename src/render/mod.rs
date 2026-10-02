@@ -14,7 +14,7 @@ use smithay::{
         Color32F, ImportAll, ImportMem, Renderer,
         damage::{Error as OutputDamageTrackerError, OutputDamageTracker, RenderOutputResult},
         element::{
-            AsRenderElements, RenderElement, Wrap,
+            AsRenderElements, Element, Id, RenderElement, Wrap,
             memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
             surface::WaylandSurfaceRenderElement,
             utils::{
@@ -32,7 +32,10 @@ use smithay::{
     },
     output::Output,
     utils::{Logical, Point, Rectangle, Scale, Size},
-    wayland::shell::wlr_layer::Layer as WlrLayer,
+    wayland::{
+        compositor::{TraversalAction, with_surface_tree_downward},
+        shell::wlr_layer::Layer as WlrLayer,
+    },
 };
 
 #[cfg(feature = "debug")]
@@ -90,6 +93,8 @@ smithay::backend::renderer::element::render_elements! {
     Window=Wrap<E>,
     Custom=CustomRenderElements<R>,
     Preview=CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>>,
+    // A tiled window's own surfaces, cut off at its tile (see `clip_to_tile`).
+    Clipped=CropRenderElement<WindowRenderElement<R>>,
 }
 
 impl<R: Renderer + ImportAll + ImportMem, E: RenderElement<R> + std::fmt::Debug> std::fmt::Debug
@@ -101,6 +106,7 @@ impl<R: Renderer + ImportAll + ImportMem, E: RenderElement<R> + std::fmt::Debug>
             Self::Window(arg0) => f.debug_tuple("Window").field(arg0).finish(),
             Self::Custom(arg0) => f.debug_tuple("Custom").field(arg0).finish(),
             Self::Preview(arg0) => f.debug_tuple("Preview").field(arg0).finish(),
+            Self::Clipped(arg0) => f.debug_tuple("Clipped").field(arg0).finish(),
             Self::_GenericCatcher(arg0) => f.debug_tuple("_GenericCatcher").field(arg0).finish(),
         }
     }
@@ -263,8 +269,19 @@ where
         // behind top/overlay layer-shell surfaces (bars, popups) pushed just
         // above, so a maximized/tiled window's border never paints over the
         // shell's own chrome (list order is front-to-back).
-        if let Some(mut window_rect) = focused_window_rect {
+        if let Some(window_rect) = focused_window_rect {
+            // Follow the same cutoff the window itself gets, so the border
+            // hugs the visible part instead of the window's full extent.
+            let clip = space
+                .elements_for_output(output)
+                .find(|w| space.element_bbox(w) == Some(window_rect))
+                .map(|w| window_clip(w, output_geometry, &layer_map));
+            let mut window_rect = window_rect;
             window_rect.loc -= output_geometry.loc;
+            let window_rect = match clip {
+                Some(clip) => window_rect.intersection(clip).unwrap_or(window_rect),
+                None => window_rect,
+            };
             if let Some(element) = border_cache.build(renderer, window_rect, border, corner_radius) {
                 output_render_elements.push(OutputRenderElements::from(CustomRenderElements::Border(element)));
             }
@@ -331,11 +348,24 @@ where
                     Scale::from(output_scale),
                     1.0,
                 );
-                output_render_elements.extend(
-                    elements
-                        .into_iter()
-                        .map(|element| OutputRenderElements::Window(Wrap::from(element))),
-                );
+                let tile = Some(window_clip(window, output_geometry, &layer_map))
+                    .map(|rect| rect.to_f64().to_physical(output_scale).to_i32_round());
+                let main_tree = tile.map(|_| surface_tree_ids(window));
+                for element in elements {
+                    let clipped = match (&tile, &main_tree) {
+                        // Popups sit outside the window's surface tree and
+                        // are meant to overhang the tile, so they stay uncut.
+                        (Some(tile), Some(ids))
+                            if ids.contains(element.id())
+                                && !tile.contains_rect(element.geometry(Scale::from(output_scale))) =>
+                        {
+                            CropRenderElement::from_element(element, output_scale, *tile)
+                                .map(OutputRenderElements::Clipped)
+                        }
+                        _ => Some(OutputRenderElements::Window(Wrap::from(element))),
+                    };
+                    output_render_elements.extend(clipped);
+                }
             }
         }
 
@@ -389,6 +419,38 @@ where
 
         (output_render_elements, CLEAR_COLOR)
     }
+}
+
+/// Where `window` may draw, in output-local logical coordinates: its tile if
+/// it's tiled, otherwise the part of the output not reserved by layer
+/// surfaces (panels etc.) - the same area tiles are carved from.
+fn window_clip(
+    window: &WindowElement,
+    output_geometry: Rectangle<i32, Logical>,
+    layer_map: &smithay::desktop::LayerMap,
+) -> Rectangle<i32, Logical> {
+    tiling::tile_clip(window)
+        .map(|mut rect| {
+            rect.loc -= output_geometry.loc;
+            rect
+        })
+        .unwrap_or_else(|| layer_map.non_exclusive_zone())
+}
+
+/// Render-element ids of `window`'s root surface and all its subsurfaces -
+/// everything except its popups.
+fn surface_tree_ids(window: &WindowElement) -> Vec<Id> {
+    let mut ids = Vec::new();
+    if let Some(root) = window.wl_surface() {
+        with_surface_tree_downward(
+            &root,
+            (),
+            |_, _, _| TraversalAction::DoChildren(()),
+            |surface, _, _| ids.push(Id::from_wayland_resource(surface)),
+            |_, _, _| true,
+        );
+    }
+    ids
 }
 
 #[allow(clippy::too_many_arguments)]

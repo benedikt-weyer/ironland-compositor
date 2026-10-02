@@ -17,6 +17,12 @@ uniform float alpha;
 // supplied by `RoundedWindowRenderElement::draw` (see src/rounded_corners.rs).
 uniform vec2 size;
 uniform float radius;
+// The sub-rect of the texture being drawn, in normalized texture coords. It
+// is the whole texture (0,0 / 1,1) unless the element was cropped (e.g. cut
+// off at its tile), in which case `v_coords` only spans this range and must
+// be rebased to 0..1 so the mask follows the visible rect's corners.
+uniform vec2 src_loc;
+uniform vec2 src_size;
 
 varying vec2 v_coords;
 
@@ -38,7 +44,7 @@ void main() {
     color = vec4(color.rgb, 1.0);
 #endif
 
-    vec2 pos = v_coords * size;
+    vec2 pos = (v_coords - src_loc) / src_size * size;
     float dist = roundedBoxDist(pos - size * 0.5, size * 0.5, radius);
     float mask = 1.0 - smoothstep(-1.0, 1.0, dist);
 

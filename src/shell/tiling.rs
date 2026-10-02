@@ -231,6 +231,9 @@ impl TilingLayout {
         };
         let (new_root, found) = Self::remove_rec(root, window);
         self.root = new_root;
+        if found {
+            set_tile_clip(window, None);
+        }
         found
     }
 
@@ -490,6 +493,25 @@ struct RectAnim {
     /// brand-new tile, not just a reflowing sibling) - fades in on top of
     /// the shrink/grow, so a resizing sibling doesn't flicker translucent.
     fade_in: bool,
+}
+
+/// The tile rect a tiled window is currently confined to, stored in its
+/// user data so the render path (which only sees the `Space`) can crop
+/// whatever the client draws beyond it - a client may refuse to shrink below
+/// its own minimum size, or lag behind a configure.
+#[derive(Default)]
+struct TileClip(RefCell<Option<Rectangle<i32, Logical>>>);
+
+fn set_tile_clip(window: &WindowElement, rect: Option<Rectangle<i32, Logical>>) {
+    window.user_data().insert_if_missing(TileClip::default);
+    if let Some(clip) = window.user_data().get::<TileClip>() {
+        *clip.0.borrow_mut() = rect;
+    }
+}
+
+/// The global-logical rect `window` must not draw outside of, if it's tiled.
+pub(crate) fn tile_clip(window: &WindowElement) -> Option<Rectangle<i32, Logical>> {
+    window.user_data().get::<TileClip>().and_then(|clip| *clip.0.borrow())
 }
 
 /// Per-output registry of [`RectAnim`]s, stored the same way as
@@ -856,6 +878,7 @@ fn apply_layout_impl<BackendData: Backend>(state: &mut AnvilState<BackendData>, 
         // `render::output_elements`/`shell::xdg`/`shell::x11`, not by its
         // tile slot - resizing it down here would fight whatever configure
         // made it fullscreen in the first place.
+        set_tile_clip(&window, (fullscreen.as_ref() != Some(&window)).then_some(rect));
         if fullscreen.as_ref() != Some(&window) {
             if let Some(duration) = anim_duration {
                 let previous = state.space.element_geometry(&window);

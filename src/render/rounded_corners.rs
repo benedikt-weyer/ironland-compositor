@@ -105,6 +105,8 @@ pub fn corners_program(renderer: &mut GlesRenderer) -> Result<GlesTexProgram, Gl
         &[
             UniformName::new("size", UniformType::_2f),
             UniformName::new("radius", UniformType::_1f),
+            UniformName::new("src_loc", UniformType::_2f),
+            UniformName::new("src_size", UniformType::_2f),
         ],
     )?;
     renderer
@@ -245,9 +247,13 @@ where
                 .draw(frame, src, dst, damage, opaque_regions, cache);
         };
 
+        let tex_size = texture.size();
+        let (tex_w, tex_h) = (tex_size.w.max(1) as f64, tex_size.h.max(1) as f64);
         let uniforms = [
             Uniform::new("size", (dst.size.w as f32, dst.size.h as f32)),
             Uniform::new("radius", self.radius),
+            Uniform::new("src_loc", ((src.loc.x / tex_w) as f32, (src.loc.y / tex_h) as f32)),
+            Uniform::new("src_size", ((src.size.w / tex_w) as f32, (src.size.h / tex_h) as f32)),
         ];
 
         R::gles_frame(frame)
