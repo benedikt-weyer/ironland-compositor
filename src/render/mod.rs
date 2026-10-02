@@ -1,3 +1,14 @@
+//! Rendering pipeline, drawing helpers, overlays and wallpaper handling.
+
+pub mod border;
+#[cfg(any(feature = "udev", feature = "xwayland"))]
+pub mod cursor;
+pub mod drawing;
+pub mod font;
+pub mod perf_overlay;
+pub mod rounded_corners;
+pub mod wallpaper;
+
 use smithay::{
     backend::renderer::{
         Color32F, ImportAll, ImportMem, Renderer,

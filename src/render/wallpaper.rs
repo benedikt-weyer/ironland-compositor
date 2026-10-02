@@ -13,7 +13,7 @@ use tracing::warn;
 
 /// Shipped as the wallpaper whenever no `wallpaper` path is configured, or
 /// the configured one fails to load.
-static DEFAULT_WALLPAPER: &[u8] = include_bytes!("../resources/wallpaper.webp");
+static DEFAULT_WALLPAPER: &[u8] = include_bytes!("../../resources/wallpaper.webp");
 
 #[derive(Debug)]
 pub struct Wallpaper {

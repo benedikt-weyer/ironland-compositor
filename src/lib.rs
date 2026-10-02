@@ -13,40 +13,31 @@
 // its old name so every existing `crate::config::Foo` reference keeps
 // working unchanged.
 pub use ironland_config as config;
-pub mod keybindings;
-pub mod border;
-pub mod clipboard;
-#[cfg(any(feature = "udev", feature = "xwayland"))]
-pub mod cursor;
-pub mod drawing;
-pub mod focus;
-pub mod focus_grab;
-pub mod font;
-pub mod foreign_toplevel;
-pub mod frame_capture;
-pub mod input_handler;
-pub mod ironland_protocols;
-pub mod launcher;
+pub mod backend;
+pub mod input;
 #[cfg(feature = "libei")]
 pub mod libei;
-pub mod perf_overlay;
-pub mod permission_prompt;
+pub mod protocols;
 pub mod render;
-pub mod rounded_corners;
-pub mod screencopy;
-#[cfg(feature = "udev")]
-pub mod session;
 pub mod shell;
 pub mod state;
+pub mod ui;
+
+// Flat re-exports keep the pre-grouping `crate::foo` paths working.
 #[cfg(feature = "udev")]
-pub mod udev;
-pub mod wallpaper;
+pub use backend::{session, udev};
 #[cfg(feature = "winit")]
-pub mod winit;
+pub use backend::winit;
 #[cfg(feature = "x11")]
-pub mod x11;
-pub mod ext_workspace;
-pub mod shortcuts;
-pub mod workspace_windows;
+pub use backend::x11;
+pub use input::{focus, input_handler, keybindings};
+pub use protocols::{
+    clipboard, ext_workspace, focus_grab, foreign_toplevel, frame_capture, ironland_protocols,
+    screencopy, shortcuts, workspace_windows,
+};
+#[cfg(any(feature = "udev", feature = "xwayland"))]
+pub use render::cursor;
+pub use render::{border, drawing, font, perf_overlay, rounded_corners, wallpaper};
+pub use ui::{launcher, permission_prompt};
 
 pub use state::{AnvilState, ClientState};

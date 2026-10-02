@@ -38,7 +38,7 @@ use smithay::{
     },
 };
 
-const SHADER: &str = include_str!("../resources/rounded_corners.frag");
+const SHADER: &str = include_str!("../../resources/rounded_corners.frag");
 
 /// Renderers from which a [`GlesRenderer`] (and, per-draw-call, a
 /// [`GlesFrame`]) can be recovered, regardless of whether they *are* one

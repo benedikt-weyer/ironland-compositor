@@ -27,7 +27,7 @@ use smithay::{
 
 use crate::rounded_corners::GlesCapable;
 
-const SHADER: &str = include_str!("../resources/border.frag");
+const SHADER: &str = include_str!("../../resources/border.frag");
 
 #[derive(Debug, Clone)]
 struct BorderProgram(GlesPixelProgram);

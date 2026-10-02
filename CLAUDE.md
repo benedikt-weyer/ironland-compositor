@@ -16,7 +16,7 @@ Enter the dev shell first (direnv does this automatically via `.envrc`; otherwis
 - `run-vm` — boots a full NixOS VM (via `nix build .#nixosConfigurations.compositor-vm...`) with the compositor autostarting on login as user `dev`; use this to test standalone/tty-udev behavior or session integration that a nested winit window can't exercise. See `scripts/run-vm` for host GL caveats.
 - `help` — lists the scripts above.
 - `cargo build` / `cargo run -- --winit` / `cargo run -- --tty-udev` — standard cargo entry points; `--winit` nests the compositor in an existing session (development), `--tty-udev` runs standalone on a tty via DRM/KMS + libinput.
-- `cargo test` — unit tests live inline (`#[cfg(test)]`) in `src/config.rs`, `src/wallpaper.rs`, `src/launcher.rs`, `src/shell/workspace.rs`. Run a single test with `cargo test <name>`.
+- `cargo test` — unit tests live inline (`#[cfg(test)]`) in `src/config.rs`, `src/wallpaper.rs`, `src/ui/launcher.rs`, `src/shell/workspace.rs`. Run a single test with `cargo test <name>`.
 - `cargo clippy` / `cargo fmt` — both `clippy` and `rustfmt` are provided by `devShells.default` in `flake.nix`.
 - `nix build .#default` — builds the compositor via crane (`packages.default` in `flake.nix`); `nix build .#settings-gui` builds the Go GUI.
 
@@ -30,28 +30,30 @@ There is no CI config in this repo (no `.github/workflows`); the closest thing i
 
 ### Crate layout
 
+`src/` is grouped into `backend/`, `input/`, `protocols/`, `render/`, `ui/` and `shell/`. `lib.rs` re-exports the leaf modules at the crate root, so `crate::foo::` paths (e.g. `crate::wallpaper`) still resolve.
+
 - `src/main.rs` — parses `--winit`/`--tty-udev` and dispatches to `winit::run_winit()` / `udev::run_udev()`.
 - `src/state.rs` — `AnvilState<BackendData>`, the central compositor state struct and the hub that Smithay's handler traits (`CompositorHandler`, `SeatHandler`, etc.) are implemented on. Almost every subsystem module is reached through fields/methods on this type.
-- `src/winit.rs` / `src/udev.rs` — the two backends selectable at runtime, plus `src/x11.rs` (feature-gated) for an X11 backend. `winit` nests in an existing session for development; `udev` runs standalone using DRM/KMS + libinput and needs `session.rs`.
+- `src/backend/winit.rs` / `src/backend/udev.rs` — the two backends selectable at runtime, plus `src/backend/x11.rs` (feature-gated) for an X11 backend. `winit` nests in an existing session for development; `udev` runs standalone using DRM/KMS + libinput and needs `backend/session.rs`.
 - `src/shell/` — window management: `xdg.rs` (native Wayland toplevels/popups), `x11.rs` (XWayland client handling — X11 windows tile the same as native toplevels via `tiling::should_tile_x11`; dialogs/utility/fixed-size windows opt out and stay floating), `tiling.rs` (automatic BSP/"dwindle" layout, Hyprland-style, one tree per output), `workspace.rs` (virtual desktops layered on top of tiling; per-output, with `PerMonitor` vs `Combined` switching modes and optional dynamic growth), `grabs.rs`/`ssd.rs`/`element.rs` (move/resize grabs, server-side decorations, the generic window element type).
 - `src/config.rs` — user settings (keyboard layout + shortcuts) loaded from a TOML file, checked in this priority order: `$IRONLAND_COMPOSITOR_CONFIG` → `$XDG_CONFIG_HOME/ironland-compositor/config.toml` → `/etc/ironland-compositor/config.toml` (written by the NixOS module) → hardcoded defaults. A malformed file is logged and ignored, not fatal.
-- `src/input_handler.rs` — keyboard/pointer input dispatch; the single call site that resolves key bindings to actions and routes surface-targeted grabs to `focus_grab.rs`/`shortcuts.rs`.
-- `src/render.rs`, `src/drawing.rs`, `src/font.rs`, `src/cursor.rs`, `src/wallpaper.rs` — rendering pipeline, including a tiny embedded 5x7 bitmap font for the launcher overlay (no font-rendering dependency) and per-output wallpaper scaling/caching.
-- `src/launcher.rs` — XDG desktop entry discovery and fuzzy filtering for the app launcher overlay.
-- `src/session.rs` — announces the compositor session to systemd/D-Bus (`graphical-session.target`), required for `xdg-desktop-portal` and portal-backed dialogs to start at all.
+- `src/input/input_handler.rs` — keyboard/pointer input dispatch; the single call site that resolves key bindings to actions and routes surface-targeted grabs to `focus_grab.rs`/`shortcuts.rs`.
+- `src/render/` (`mod.rs` is the pipeline; also `drawing.rs`, `font.rs`, `cursor.rs`, `wallpaper.rs`) — rendering pipeline, including a tiny embedded 5x7 bitmap font for the launcher overlay (no font-rendering dependency) and per-output wallpaper scaling/caching.
+- `src/ui/launcher.rs` — XDG desktop entry discovery and fuzzy filtering for the app launcher overlay.
+- `src/backend/session.rs` — announces the compositor session to systemd/D-Bus (`graphical-session.target`), required for `xdg-desktop-portal` and portal-backed dialogs to start at all.
 
-### Custom Wayland protocol extensions (`protocols/*.xml`, `src/ironland_protocols.rs`)
+### Custom Wayland protocol extensions (`protocols/*.xml`, `src/protocols/ironland_protocols.rs`)
 
-Three protocols are custom to this compositor, generated at compile time via `wayland-scanner` (see `src/ironland_protocols.rs` module doc for why these aren't reused from `hyprland-*` equivalents — this compositor's needs are narrower):
+Three protocols are custom to this compositor, generated at compile time via `wayland-scanner` (see `src/protocols/ironland_protocols.rs` module doc for why these aren't reused from `hyprland-*` equivalents — this compositor's needs are narrower):
 
-- `ironland-shortcuts-v1` (`src/shortcuts.rs`) — named keybinding actions exposed to clients; `fire()` is the single entry point, called from `input_handler.rs`. Also backs the `GlobalShortcuts` xdg-desktop-portal backend.
-- `ironland-focus-grab-v1` (`src/focus_grab.rs`) — single-surface pointer/key focus grabs (e.g. Quickshell popups); `check()` is the single entry point.
-- `ironland-workspace-windows-v1` (`src/workspace_windows.rs`) — per-window workspace membership; `sync()` is the single entry point, called alongside `foreign_toplevel::sync` and `ext_workspace::ext_workspace_sync` on the same event set (window map/unmap, title/app-id change, workspace move).
+- `ironland-shortcuts-v1` (`src/protocols/shortcuts.rs`) — named keybinding actions exposed to clients; `fire()` is the single entry point, called from `input_handler.rs`. Also backs the `GlobalShortcuts` xdg-desktop-portal backend.
+- `ironland-focus-grab-v1` (`src/protocols/focus_grab.rs`) — single-surface pointer/key focus grabs (e.g. Quickshell popups); `check()` is the single entry point.
+- `ironland-workspace-windows-v1` (`src/protocols/workspace_windows.rs`) — per-window workspace membership; `sync()` is the single entry point, called alongside `foreign_toplevel::sync` and `ext_workspace::ext_workspace_sync` on the same event set (window map/unmap, title/app-id change, workspace move).
 
 ### Standard protocol integrations that bridge to the shell
 
-- `src/ext_workspace.rs` — server side of `ext-workspace-v1`; a thin read/write projection of `shell::workspace` state, not a second source of truth. `sync()` is the entry point.
-- `src/foreign_toplevel.rs` — server side of `wlr-foreign-toplevel-management-unstable-v1`; reads window lists from `shell::workspace::all_windows` (deliberately not `state.space.elements()`, which would drop windows on inactive workspaces). `sync()` is the entry point.
+- `src/protocols/ext_workspace.rs` — server side of `ext-workspace-v1`; a thin read/write projection of `shell::workspace` state, not a second source of truth. `sync()` is the entry point.
+- `src/protocols/foreign_toplevel.rs` — server side of `wlr-foreign-toplevel-management-unstable-v1`; reads window lists from `shell::workspace::all_windows` (deliberately not `state.space.elements()`, which would drop windows on inactive workspaces). `sync()` is the entry point.
 
 These three `sync`/`fire`/`check` entry points (`ext_workspace`, `foreign_toplevel`, `workspace_windows`) intentionally don't diff against previous state before emitting — call all three together after any window/workspace-affecting event, matching the existing call sites.
 
